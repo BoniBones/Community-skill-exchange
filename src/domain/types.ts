@@ -1,0 +1,176 @@
+/**
+ * Domain types. They mirror the relational schema in docs/ARCHITECTURE.md (§3)
+ * so the mock repository and the future Supabase repository share one contract.
+ *
+ * Keep the core distinction explicit:
+ *  - UserSkill  → a skill a person HAS (offers) or WANTS to learn
+ *  - Activity   → a concrete listing a person OFFERS
+ *  - Session    → a booking that results from an activity
+ */
+
+export type ID = string;
+/** ISO-8601 timestamp in UTC (e.g. "2026-11-12T21:00:00Z"). Converted to Buenos Aires time only for display. */
+export type UtcTimestamp = string;
+
+export type CategoryId =
+  | 'music_arts'
+  | 'languages'
+  | 'academic'
+  | 'tech'
+  | 'sports'
+  | 'crafts'
+  | 'personal'
+  | 'community';
+
+export interface SkillCategory {
+  id: CategoryId;
+  name: string;
+  icon: string; // Ionicons glyph name
+  color: string;
+}
+
+export interface Skill {
+  id: ID;
+  categoryId: CategoryId;
+  name: string;
+}
+
+export type SkillLevel = 'beginner' | 'intermediate' | 'advanced' | 'expert';
+
+export interface UserSkill {
+  skillId: ID;
+  kind: 'offers' | 'wants';
+  level?: SkillLevel;
+}
+
+export interface Neighborhood {
+  id: ID;
+  name: string;
+}
+
+export interface Profile {
+  id: ID;
+  displayName: string;
+  avatarUrl?: string;
+  neighborhoodId: ID;
+  bio: string;
+  memberSince: UtcTimestamp;
+  skills: UserSkill[];
+  availabilitySummary: string;
+  ratingAvg: number | null;
+  ratingCount: number;
+  completedSessions: number;
+  /** Sessions taught + sessions attended; a simple community participation signal. */
+  communityContributions: number;
+}
+
+export type PaymentMode = 'credits' | 'money' | 'mixed';
+
+/**
+ * How an instructor wants to be paid for one activity.
+ * Invariants (enforced by a DB CHECK constraint later):
+ *  - credits → creditAmount > 0, moneyAmountCents undefined
+ *  - money   → moneyAmountCents > 0, creditAmount undefined
+ *  - mixed   → both > 0
+ * There is deliberately NO global credit↔money exchange rate.
+ */
+export interface PaymentArrangement {
+  mode: PaymentMode;
+  creditAmount?: number;
+  moneyAmountCents?: number;
+  currency: 'ARS';
+}
+
+export type ActivityFormat = 'in_person' | 'online' | 'either';
+
+export interface Activity {
+  id: ID;
+  instructorId: ID;
+  skillId: ID;
+  title: string;
+  description: string;
+  durationMin: number;
+  format: ActivityFormat;
+  /** Public meeting area (neighborhood / public place). Never a home address. */
+  meetingArea: string;
+  requirements: string;
+  availabilitySummary: string;
+  payment: PaymentArrangement;
+  status: 'draft' | 'published' | 'paused' | 'archived';
+}
+
+export type SessionState =
+  | 'requested'
+  | 'confirmed'
+  | 'declined'
+  | 'expired'
+  | 'cancelled'
+  | 'in_progress'
+  | 'no_show_pending'
+  | 'completed'
+  | 'disputed'
+  | 'resolved';
+
+export interface Session {
+  id: ID;
+  activityId: ID;
+  learnerId: ID;
+  instructorId: ID;
+  startsAt: UtcTimestamp;
+  endsAt: UtcTimestamp;
+  state: SessionState;
+  /** Price snapshot copied at booking time; later edits to the activity don't change it. */
+  price: PaymentArrangement;
+}
+
+export type CreditTxType = 'incentive' | 'hold' | 'release' | 'refund' | 'penalty' | 'adjustment';
+
+/** One row of a user's view of the credit ledger (signed from the user's perspective). */
+export interface CreditLedgerEntry {
+  id: ID;
+  type: CreditTxType;
+  amount: number; // + received, − sent
+  sessionId?: ID;
+  memo: string;
+  createdAt: UtcTimestamp;
+  status: 'posted' | 'pending';
+}
+
+export interface CreditWallet {
+  available: number;
+  heldInEscrow: number;
+  /** Credits the user will receive once confirmed sessions they teach are verified. */
+  incomingPending: number;
+  earnedTotal: number;
+  spentTotal: number;
+  maxBalance: number | null;
+  entries: CreditLedgerEntry[];
+}
+
+export interface Review {
+  id: ID;
+  sessionId: ID;
+  authorId: ID;
+  subjectId: ID;
+  rating: 1 | 2 | 3 | 4 | 5;
+  comment: string;
+  createdAt: UtcTimestamp;
+}
+
+export type MatchKind = 'reciprocal' | 'wants_skill' | 'nearby';
+
+export interface ActivityRecommendation {
+  activity: Activity;
+  instructor: Profile;
+  score: number;
+  reasons: MatchKind[];
+  /** For reciprocal matches: the viewer's skill the instructor wants to learn. */
+  reciprocalSkillId?: ID;
+}
+
+export interface ActivityFilters {
+  query?: string;
+  categoryId?: CategoryId;
+  paymentMode?: PaymentMode;
+  neighborhoodId?: ID;
+}
