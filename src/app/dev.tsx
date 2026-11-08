@@ -4,12 +4,15 @@ import { Platform, View } from 'react-native';
 
 import { config } from '../lib/config';
 import { formatSessionDate } from '../lib/dates';
+import { useCurrentUserId, useLedgerIntegrity } from '../services/queries';
 import { checkBackendHealth } from '../services/supabase';
 import { InfoRow, Screen } from '../ui/layout';
 import { Badge, Button, Card, Text } from '../ui/primitives';
 import { colors, spacing } from '../ui/theme';
 
 export default function DevDiagnosticsScreen() {
+  const { data: userId } = useCurrentUserId();
+  const integrity = useLedgerIntegrity(userId);
   const healthQuery = useQuery({
     queryKey: ['backend-health'],
     queryFn: checkBackendHealth,
@@ -22,7 +25,7 @@ export default function DevDiagnosticsScreen() {
     <Screen edges={['bottom']}>
       <Text variant="title">Diagnóstico del entorno</Text>
       <Text variant="caption" color={colors.textMuted}>
-        Verificación en vivo de compatibilidad con Expo Go, zona horaria y conexión al backend de desarrollo.
+        Verificación en vivo de compatibilidad con Expo Go, zona horaria, conexión al backend e invariantes contables.
       </Text>
 
       <Card style={{ gap: spacing.md }}>
@@ -51,6 +54,35 @@ export default function DevDiagnosticsScreen() {
           value={formatSessionDate(nowIso)}
         />
       </Card>
+
+      {integrity.data ? (
+        <Card style={{ gap: spacing.md }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text variant="heading">Invariantes del libro mayor</Text>
+            <Badge
+              label={integrity.data.healthy ? '5/5 INVARIANTES OK' : 'ERROR CONTABLE'}
+              fg={integrity.data.healthy ? colors.money : colors.danger}
+              bg={integrity.data.healthy ? colors.moneySoft : colors.dangerSoft}
+              icon="shield-checkmark-outline"
+            />
+          </View>
+          {integrity.data.invariants.map((inv) => (
+            <InfoRow
+              key={inv.id}
+              icon={inv.passed ? 'checkmark-circle-outline' : 'alert-circle-outline'}
+              label={inv.name}
+              value={inv.detail}
+            />
+          ))}
+          <Button
+            title="Ejecutar auditoría contable"
+            variant="secondary"
+            icon="shield-checkmark-outline"
+            loading={integrity.isFetching}
+            onPress={() => integrity.refetch()}
+          />
+        </Card>
+      ) : null}
 
       <Card style={{ gap: spacing.md }}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>

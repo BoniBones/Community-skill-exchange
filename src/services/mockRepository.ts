@@ -13,7 +13,10 @@ import type {
   CreditWallet,
   DayPeriod,
   ID,
+  LedgerIntegrityReport,
+  LedgerInvariantCheck,
   MatchKind,
+  MonetaryPayment,
   PaymentArrangement,
   ProfileStatus,
   Session,
@@ -26,6 +29,7 @@ const delay = (ms = 200) => new Promise((r) => setTimeout(r, ms));
 const MAX_BALANCE = 20;
 const MIN_PILOT_AGE = 18;
 const CANCELLATION_DEADLINE_HOURS = 24;
+const OBJECTION_WINDOW_HOURS = 48;
 
 const blockedByUser = new Map<ID, Set<ID>>();
 
@@ -61,7 +65,7 @@ function validatePaymentArrangement(p: PaymentArrangement): PaymentArrangement {
     }
     return { mode: 'money', moneyAmountCents: p.moneyAmountCents, currency: 'ARS' };
   }
-  if (!p.creditAmount || p.creditAmount <= 0 || !p.moneyAmountCents || p.moneyAmountCents <= 0) {
+  if (!p.creditAmount || p.creditAmount <= 0 || !p.moneyAmountCents || !p.moneyAmountCents || p.moneyAmountCents <= 0) {
     throw new Error('En modalidad «Pago mixto» debés indicar tanto créditos (> 0) como un monto en ARS (> 0).');
   }
   return {
@@ -113,6 +117,101 @@ function computeWallet(): CreditWallet {
     sum(posted.filter((e) => e.type === 'refund'));
 
   return { available, heldInEscrow, incomingPending, earnedTotal, spentTotal, maxBalance: MAX_BALANCE, entries };
+}
+
+export function verifyWalletInvariants(
+  wallet: CreditWallet,
+  sessions: Session[],
+  monetaryPayments: MonetaryPayment[],
+): LedgerIntegrityReport {
+  const posted = wallet.entries.filter((e) => e.status === 'posted');
+  const incentivesTotal = posted.filter((e) => e.type === 'incentive').reduce((acc, e) => acc + e.amount, 0);
+  const adjustmentsTotal = posted.filter((e) => e.type === 'adjustment').reduce((acc, e) => acc + e.amount, 0);
+
+  // Invariant 1: Non-negative user balance
+  const nonNegative = wallet.available >= 0;
+
+  // Invariant 2: Double-entry conservation equation
+  // available + heldInEscrow === incentives + earnedTotal + adjustments - spentTotal
+  const lhs = Math.round((wallet.available + wallet.heldInEscrow) * 100) / 100;
+  const rhs =
+    Math.round((incentivesTotal + wallet.earnedTotal + adjustmentsTotal - wallet.spentTotal) * 100) / 100;
+  const conservation = lhs === rhs;
+
+  // Invariant 3: Escrow parity with sessions
+  const pendingHolds = wallet.entries.filter((e) => e.status === 'pending' && e.type === 'hold');
+  const escrowMatchesSessions = pendingHolds.every((hold) => {
+    const ses = sessions.find((s) => s.id === hold.sessionId);
+    if (!ses) return false;
+    return (
+      ses.state === 'requested' ||
+      ses.state === 'confirmed' ||
+      ses.state === 'in_progress' ||
+      ses.state === 'disputed' ||
+      (ses.state === 'cancelled' && ses.cancellationTiming === 'late_review_window')
+    );
+  });
+
+  // Invariant 4: Idempotency uniqueness & single initial incentive
+  const keys = wallet.entries.map((e) => e.idempotencyKey).filter((k): k is string => Boolean(k));
+  const uniqueKeys = new Set(keys);
+  const incentiveCount = wallet.entries.filter((e) => e.type === 'incentive').length;
+  const idempotent = keys.length === uniqueKeys.size && incentiveCount <= 1;
+
+  // Invariant 5: Strictly separated monetary (ARS) circuit
+  const validMonetary = monetaryPayments.every((mp) => {
+    const ses = sessions.find((s) => s.id === mp.sessionId);
+    return mp.currency === 'ARS' && mp.amountCents > 0 && (!ses || ses.price.mode === 'money' || ses.price.mode === 'mixed');
+  });
+
+  const invariants: LedgerInvariantCheck[] = [
+    {
+      id: 'non_negative_balance',
+      name: 'Saldo de créditos no negativo',
+      passed: nonNegative,
+      detail: `Disponible: ${wallet.available} cr (≥ 0)`,
+    },
+    {
+      id: 'double_entry_conservation',
+      name: 'Conservación por partida doble',
+      passed: conservation,
+      detail: `Disponible (${wallet.available}) + Custodia (${wallet.heldInEscrow}) = Incentivos (${incentivesTotal}) + Ganados (${wallet.earnedTotal}) − Usados (${wallet.spentTotal})`,
+    },
+    {
+      id: 'escrow_session_parity',
+      name: 'Paridad entre custodia y sesiones activas/en revisión',
+      passed: escrowMatchesSessions,
+      detail: `${pendingHolds.length} retención(es) activa(s) vinculadas a sesiones vigentes o en ventana de 48 h`,
+    },
+    {
+      id: 'idempotency_uniqueness',
+      name: 'Idempotencia e incentivo inicial único',
+      passed: idempotent,
+      detail: `${uniqueKeys.size} claves únicas · ${incentiveCount} incentivo inicial otorgado`,
+    },
+    {
+      id: 'separated_monetary_circuit',
+      name: 'Separación contable entre créditos y ARS',
+      passed: validMonetary,
+      detail: `${monetaryPayments.length} registro(s) en ARS en tabla separada (sin tasa de cambio fija)`,
+    },
+  ];
+
+  const maxBalance = wallet.maxBalance ?? MAX_BALANCE;
+  const circulationRatio = Math.min(1, Math.max(0, wallet.available / maxBalance));
+  const softCapReached = wallet.available + wallet.incomingPending >= maxBalance * 0.8;
+
+  return {
+    healthy: invariants.every((i) => i.passed),
+    checkedAt: new Date().toISOString(),
+    available: wallet.available,
+    heldInEscrow: wallet.heldInEscrow,
+    incomingPending: wallet.incomingPending,
+    maxBalance,
+    circulationRatio,
+    softCapReached,
+    invariants,
+  };
 }
 
 export const mockRepository: Repository = {
@@ -316,6 +415,7 @@ export const mockRepository: Repository = {
         id: `tx-inc-${Date.now()}`,
         type: 'incentive',
         amount: 2,
+        idempotencyKey: `incentive:${instructorId}`,
         memo: 'Incentivo de participación: publicaste tu primera actividad en la comunidad',
         createdAt: new Date().toISOString(),
         status: 'posted',
@@ -395,6 +495,7 @@ export const mockRepository: Repository = {
       }
     }
 
+    const nowIso = new Date().toISOString();
     const startsMs = new Date(input.startsAt).getTime();
     const endsAt = new Date(startsMs + activity.durationMin * 60_000).toISOString();
     const newSession: Session = {
@@ -416,9 +517,28 @@ export const mockRepository: Repository = {
         type: 'hold',
         amount: -creditCost,
         sessionId: newSession.id,
+        idempotencyKey: `hold:${newSession.id}`,
         memo: `${activity.title}: retenido en custodia hasta completar la sesión`,
-        createdAt: new Date().toISOString(),
+        createdAt: nowIso,
         status: 'pending',
+      });
+    }
+
+    // Separate accounting record for 'money' and 'mixed' payment modes
+    const moneyCents = activity.payment.mode !== 'credits' ? (activity.payment.moneyAmountCents ?? 0) : 0;
+    if (moneyCents > 0) {
+      db.monetaryPayments.unshift({
+        id: `mp-${Date.now()}`,
+        sessionId: newSession.id,
+        activityTitle: activity.title,
+        payerId: userId,
+        payeeId: activity.instructorId,
+        amountCents: moneyCents,
+        currency: 'ARS',
+        method: 'cash_or_transfer',
+        status: 'pending',
+        createdAt: nowIso,
+        updatedAt: nowIso,
       });
     }
 
@@ -443,7 +563,7 @@ export const mockRepository: Repository = {
       return updated;
     }
 
-    // Declined -> refund any held credits
+    // Declined -> refund any held credits and void any pending monetary payment record
     const updated: Session = { ...s, state: 'declined' };
     db.sessions[idx] = updated;
     const holdIdx = db.ledger.findIndex((e) => e.sessionId === s.id && e.type === 'hold' && e.status === 'pending');
@@ -455,10 +575,19 @@ export const mockRepository: Repository = {
         type: 'refund',
         amount: Math.abs(hold.amount),
         sessionId: s.id,
+        idempotencyKey: `refund:${s.id}`,
         memo: 'Reintegro: el instructor no pudo tomar la solicitud',
         createdAt: new Date().toISOString(),
         status: 'posted',
       });
+    }
+    const mpIdx = db.monetaryPayments.findIndex((mp) => mp.sessionId === s.id);
+    if (mpIdx >= 0) {
+      db.monetaryPayments[mpIdx] = {
+        ...db.monetaryPayments[mpIdx]!,
+        status: 'refunded',
+        updatedAt: new Date().toISOString(),
+      };
     }
     return updated;
   },
@@ -477,14 +606,31 @@ export const mockRepository: Repository = {
 
     const hoursUntilStart = (new Date(s.startsAt).getTime() - Date.now()) / 3_600_000;
     const cancelledByInstructor = s.instructorId === userId;
-    const isTimely = cancelledByInstructor || hoursUntilStart >= CANCELLATION_DEADLINE_HOURS;
+    const isTimely =
+      !input.simulateLateWindow && (cancelledByInstructor || hoursUntilStart >= CANCELLATION_DEADLINE_HOURS);
+
+    const reviewWindowEndsAt = !isTimely
+      ? new Date(Date.now() + OBJECTION_WINDOW_HOURS * 3_600_000).toISOString()
+      : undefined;
 
     const updated: Session = {
       ...s,
       state: 'cancelled',
       cancellationReason: input.reason.trim() || 'Cancelada por participante',
+      cancellationTiming: isTimely ? 'timely' : 'late_review_window',
+      reviewWindowEndsAt,
     };
     db.sessions[idx] = updated;
+
+    // Update monetary payment record if present
+    const mpIdx = db.monetaryPayments.findIndex((mp) => mp.sessionId === s.id);
+    if (mpIdx >= 0) {
+      db.monetaryPayments[mpIdx] = {
+        ...db.monetaryPayments[mpIdx]!,
+        status: isTimely ? 'refunded' : 'disputed',
+        updatedAt: new Date().toISOString(),
+      };
+    }
 
     const holdIdx = db.ledger.findIndex((e) => e.sessionId === s.id && e.type === 'hold' && e.status === 'pending');
     if (holdIdx >= 0) {
@@ -496,6 +642,7 @@ export const mockRepository: Repository = {
           type: 'refund',
           amount: Math.abs(hold.amount),
           sessionId: s.id,
+          idempotencyKey: `refund:${s.id}`,
           memo: cancelledByInstructor
             ? 'Reintegro total: el instructor canceló la sesión'
             : 'Reintegro total: cancelaste con más de 24 h de anticipación',
@@ -515,20 +662,111 @@ export const mockRepository: Repository = {
         return {
           session: updated,
           refundMessage:
-            'Cancelación con menos de 24 h: los créditos permanecen en custodia durante la ventana de revisión de 48 h (sin penalidad automática irreversible).',
+            'Cancelación con menos de 24 h: los créditos permanecen en custodia durante la ventana de revisión de 48 h (sin penalidad automática irreversible). Podés presentar un descargo por fuerza mayor.',
         };
       }
     }
 
     return {
       session: updated,
-      refundMessage: 'La sesión fue cancelada.',
+      refundMessage: isTimely
+        ? 'La sesión fue cancelada a término sin cargos.'
+        : 'Cancelación registrada dentro de las 24 h previas: se abrió la ventana de revisión de 48 h.',
     };
+  },
+
+  async submitCancellationObjection(userId, input) {
+    await delay(200);
+    const reason = input.reason.trim();
+    if (reason.length < 6) {
+      throw new Error('Describí brevemente el motivo de fuerza mayor o imprevisto (al menos 6 caracteres).');
+    }
+    const idx = db.sessions.findIndex((s) => s.id === input.sessionId);
+    if (idx < 0) throw new Error('Sesión no encontrada.');
+    const s = db.sessions[idx]!;
+    if (s.learnerId !== userId && s.instructorId !== userId) {
+      throw new Error('No sos participante de esta sesión.');
+    }
+
+    const nowIso = new Date().toISOString();
+    const updated: Session = {
+      ...s,
+      state: 'disputed',
+      cancellationTiming: 'late_review_window',
+      objectionReason: reason,
+      objectionSubmittedAt: nowIso,
+    };
+    db.sessions[idx] = updated;
+
+    const holdIdx = db.ledger.findIndex((e) => e.sessionId === s.id && e.type === 'hold' && e.status === 'pending');
+    if (holdIdx >= 0) {
+      const hold = db.ledger[holdIdx]!;
+      db.ledger[holdIdx] = {
+        ...hold,
+        memo: `${hold.memo.split(' (')[0]} (descargo presentado · en revisión administrativa sin penalidad automática)`,
+      };
+    }
+
+    return updated;
   },
 
   async getWallet(): Promise<CreditWallet> {
     await delay();
     return computeWallet();
+  },
+
+  async getLedgerIntegrity(): Promise<LedgerIntegrityReport> {
+    await delay(100);
+    const wallet = computeWallet();
+    return verifyWalletInvariants(wallet, db.sessions, db.monetaryPayments);
+  },
+
+  async listMonetaryPayments(userId) {
+    await delay(120);
+    return db.monetaryPayments
+      .filter((mp) => mp.payerId === userId || mp.payeeId === userId)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  },
+
+  async getMonetaryPaymentBySession(sessionId) {
+    await delay(100);
+    return db.monetaryPayments.find((mp) => mp.sessionId === sessionId) ?? null;
+  },
+
+  async reportMonetaryPayment(userId, input) {
+    await delay(200);
+    const idx = db.monetaryPayments.findIndex((mp) => mp.sessionId === input.sessionId);
+    if (idx < 0) throw new Error('No se encontró un registro de pago en ARS para esta sesión.');
+    const mp = db.monetaryPayments[idx]!;
+    if (mp.payerId !== userId) {
+      throw new Error('Solo quien toma la actividad puede informar el envío del pago en ARS.');
+    }
+    const updated: MonetaryPayment = {
+      ...mp,
+      method: input.method,
+      status: 'reported_by_payer',
+      externalRef: input.externalRef?.trim() || undefined,
+      updatedAt: new Date().toISOString(),
+    };
+    db.monetaryPayments[idx] = updated;
+    return updated;
+  },
+
+  async confirmMonetaryPayment(userId, input) {
+    await delay(200);
+    const idx = db.monetaryPayments.findIndex((mp) => mp.sessionId === input.sessionId);
+    if (idx < 0) throw new Error('No se encontró un registro de pago en ARS para esta sesión.');
+    const mp = db.monetaryPayments[idx]!;
+    if (mp.payeeId !== userId) {
+      throw new Error('Solo el instructor puede confirmar la recepción del pago en ARS.');
+    }
+    const updated: MonetaryPayment = {
+      ...mp,
+      status: 'confirmed_by_payee',
+      updatedAt: new Date().toISOString(),
+    };
+    db.monetaryPayments[idx] = updated;
+    return updated;
   },
 
   async listReviewsAbout(userId) {

@@ -7,13 +7,16 @@ import type {
   ActivityFilters,
   ActivityUpsertInput,
   AvailabilityUpdateInput,
+  ConfirmMonetaryPaymentInput,
   EligibilitySubmission,
   ID,
   ProfileUpdateInput,
+  ReportMonetaryPaymentInput,
   SafetyReportInput,
   SessionCancelInput,
   SessionRequestInput,
   SessionResponseInput,
+  SubmitCancellationObjectionInput,
 } from '../domain/types';
 import { mockRepository } from './mockRepository';
 import type { Repository } from './repository';
@@ -31,6 +34,9 @@ export const queryKeys = {
   sessions: (id: ID) => ['sessions', id] as const,
   session: (id: ID) => ['session', id] as const,
   wallet: (id: ID) => ['wallet', id] as const,
+  ledgerIntegrity: (id: ID) => ['ledger-integrity', id] as const,
+  monetaryPayments: (id: ID) => ['monetary-payments', id] as const,
+  sessionMonetaryPayment: (sessionId: ID) => ['session-monetary-payment', sessionId] as const,
   reviewsAbout: (id: ID) => ['reviews', id] as const,
   blockedUsers: (id: ID) => ['blocked-users', id] as const,
 };
@@ -99,6 +105,30 @@ export function useWallet(userId: ID | undefined) {
   });
 }
 
+export function useLedgerIntegrity(userId: ID | undefined) {
+  return useQuery({
+    queryKey: queryKeys.ledgerIntegrity(userId ?? ''),
+    queryFn: () => repository.getLedgerIntegrity(userId!),
+    enabled: !!userId,
+  });
+}
+
+export function useMonetaryPayments(userId: ID | undefined) {
+  return useQuery({
+    queryKey: queryKeys.monetaryPayments(userId ?? ''),
+    queryFn: () => repository.listMonetaryPayments(userId!),
+    enabled: !!userId,
+  });
+}
+
+export function useSessionMonetaryPayment(sessionId: ID | undefined) {
+  return useQuery({
+    queryKey: queryKeys.sessionMonetaryPayment(sessionId ?? ''),
+    queryFn: () => repository.getMonetaryPaymentBySession(sessionId!),
+    enabled: !!sessionId,
+  });
+}
+
 export function useReviewsAbout(userId: ID | undefined) {
   return useQuery({
     queryKey: queryKeys.reviewsAbout(userId ?? ''),
@@ -164,6 +194,7 @@ export function useUpsertActivity(userId: ID | undefined) {
         qc.invalidateQueries({ queryKey: ['activities'] });
         qc.invalidateQueries({ queryKey: queryKeys.profile(userId) });
         qc.invalidateQueries({ queryKey: queryKeys.wallet(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.ledgerIntegrity(userId) });
       }
     },
   });
@@ -173,10 +204,13 @@ export function useRequestSession(userId: ID | undefined) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: SessionRequestInput) => repository.requestSession(userId!, input),
-    onSuccess: () => {
+    onSuccess: (session) => {
       if (userId) {
         qc.invalidateQueries({ queryKey: queryKeys.sessions(userId) });
         qc.invalidateQueries({ queryKey: queryKeys.wallet(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.ledgerIntegrity(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.monetaryPayments(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.sessionMonetaryPayment(session.id) });
       }
     },
   });
@@ -191,6 +225,9 @@ export function useRespondToSession(userId: ID | undefined) {
         qc.invalidateQueries({ queryKey: queryKeys.session(session.id) });
         qc.invalidateQueries({ queryKey: queryKeys.sessions(userId) });
         qc.invalidateQueries({ queryKey: queryKeys.wallet(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.ledgerIntegrity(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.monetaryPayments(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.sessionMonetaryPayment(session.id) });
       }
     },
   });
@@ -205,6 +242,53 @@ export function useCancelSession(userId: ID | undefined) {
         qc.invalidateQueries({ queryKey: queryKeys.session(session.id) });
         qc.invalidateQueries({ queryKey: queryKeys.sessions(userId) });
         qc.invalidateQueries({ queryKey: queryKeys.wallet(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.ledgerIntegrity(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.monetaryPayments(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.sessionMonetaryPayment(session.id) });
+      }
+    },
+  });
+}
+
+export function useSubmitCancellationObjection(userId: ID | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: SubmitCancellationObjectionInput) =>
+      repository.submitCancellationObjection(userId!, input),
+    onSuccess: (session) => {
+      if (userId) {
+        qc.invalidateQueries({ queryKey: queryKeys.session(session.id) });
+        qc.invalidateQueries({ queryKey: queryKeys.sessions(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.wallet(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.ledgerIntegrity(userId) });
+      }
+    },
+  });
+}
+
+export function useReportMonetaryPayment(userId: ID | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ReportMonetaryPaymentInput) => repository.reportMonetaryPayment(userId!, input),
+    onSuccess: (mp) => {
+      if (userId) {
+        qc.invalidateQueries({ queryKey: queryKeys.monetaryPayments(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.sessionMonetaryPayment(mp.sessionId) });
+        qc.invalidateQueries({ queryKey: queryKeys.ledgerIntegrity(userId) });
+      }
+    },
+  });
+}
+
+export function useConfirmMonetaryPayment(userId: ID | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ConfirmMonetaryPaymentInput) => repository.confirmMonetaryPayment(userId!, input),
+    onSuccess: (mp) => {
+      if (userId) {
+        qc.invalidateQueries({ queryKey: queryKeys.monetaryPayments(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.sessionMonetaryPayment(mp.sessionId) });
+        qc.invalidateQueries({ queryKey: queryKeys.ledgerIntegrity(userId) });
       }
     },
   });

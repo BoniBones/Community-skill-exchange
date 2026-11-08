@@ -8,6 +8,7 @@
 import type {
   Activity,
   CreditLedgerEntry,
+  MonetaryPayment,
   Profile,
   Review,
   Session,
@@ -381,6 +382,7 @@ export const ledger: CreditLedgerEntry[] = [
     id: 'tx-1',
     type: 'incentive',
     amount: 2,
+    idempotencyKey: 'incentive:u-me',
     memo: 'Incentivo de participación: publicaste tu primera actividad',
     createdAt: at(-118, 12),
     status: 'posted',
@@ -390,6 +392,7 @@ export const ledger: CreditLedgerEntry[] = [
     type: 'hold',
     amount: -1.5,
     sessionId: 'ses-python',
+    idempotencyKey: 'hold:ses-python',
     memo: 'Python desde cero con Camila',
     createdAt: at(-14, 11),
     status: 'posted',
@@ -399,6 +402,7 @@ export const ledger: CreditLedgerEntry[] = [
     type: 'release',
     amount: 1,
     sessionId: 'ses-english-diego',
+    idempotencyKey: 'release:ses-english-diego',
     memo: 'Enseñaste inglés a Diego',
     createdAt: at(-5, 19, 5),
     status: 'posted',
@@ -407,6 +411,7 @@ export const ledger: CreditLedgerEntry[] = [
     id: 'tx-3b',
     type: 'release',
     amount: 2,
+    idempotencyKey: 'release:ses-piano-martin',
     memo: 'Enseñaste piano a Martín (2 sesiones verificadas)',
     createdAt: at(-8, 18, 30),
     status: 'posted',
@@ -416,6 +421,7 @@ export const ledger: CreditLedgerEntry[] = [
     type: 'hold',
     amount: -1,
     sessionId: 'ses-yoga',
+    idempotencyKey: 'hold:ses-yoga',
     memo: 'Yoga suave al aire libre (reserva)',
     createdAt: at(-6, 10),
     status: 'posted',
@@ -425,6 +431,7 @@ export const ledger: CreditLedgerEntry[] = [
     type: 'refund',
     amount: 1,
     sessionId: 'ses-yoga',
+    idempotencyKey: 'refund:ses-yoga',
     memo: 'Reintegro: cancelaste con más de 24 h de anticipación',
     createdAt: at(-4, 15),
     status: 'posted',
@@ -434,6 +441,7 @@ export const ledger: CreditLedgerEntry[] = [
     type: 'hold',
     amount: -1,
     sessionId: 'ses-karate',
+    idempotencyKey: 'hold:ses-karate',
     memo: 'Karate con Martín: retenido hasta completar la sesión',
     createdAt: at(-1, 13),
     status: 'pending',
@@ -443,9 +451,44 @@ export const ledger: CreditLedgerEntry[] = [
     type: 'release',
     amount: 1,
     sessionId: 'ses-piano-camila',
+    idempotencyKey: 'release:ses-piano-camila',
     memo: 'Piano con Camila: se acredita al verificar la sesión',
     createdAt: at(-1, 16),
     status: 'pending',
+  },
+];
+
+/**
+ * Separate accounting records for the ARS component of 'money' and 'mixed' sessions.
+ * Never combined with CreditLedgerEntry.
+ */
+export const monetaryPayments: MonetaryPayment[] = [
+  {
+    id: 'mp-piano-camila',
+    sessionId: 'ses-piano-camila',
+    activityTitle: 'Piano para principiantes',
+    payerId: 'u-camila',
+    payeeId: 'u-me',
+    amountCents: 200_000,
+    currency: 'ARS',
+    method: 'mercadopago',
+    status: 'reported_by_payer',
+    externalRef: 'Alias: sofia.piano.mp · Comprobante #4821',
+    createdAt: at(-1, 16),
+    updatedAt: at(-1, 17, 20),
+  },
+  {
+    id: 'mp-photo-me',
+    sessionId: 'ses-photo',
+    activityTitle: 'Fotografía con el celular',
+    payerId: 'u-me',
+    payeeId: 'u-lucia',
+    amountCents: 800_000,
+    currency: 'ARS',
+    method: 'cash_or_transfer',
+    status: 'pending',
+    createdAt: at(-1, 11),
+    updatedAt: at(-1, 11),
   },
 ];
 

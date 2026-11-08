@@ -158,6 +158,8 @@ export type SessionState =
   | 'disputed'
   | 'resolved';
 
+export type CancellationTiming = 'timely' | 'late_review_window';
+
 export interface Session {
   id: ID;
   activityId: ID;
@@ -170,6 +172,10 @@ export interface Session {
   price: PaymentArrangement;
   learnerNote?: string;
   cancellationReason?: string;
+  cancellationTiming?: CancellationTiming;
+  reviewWindowEndsAt?: UtcTimestamp;
+  objectionReason?: string;
+  objectionSubmittedAt?: UtcTimestamp;
 }
 
 export interface SessionRequestInput {
@@ -186,6 +192,51 @@ export interface SessionResponseInput {
 export interface SessionCancelInput {
   sessionId: ID;
   reason: string;
+  /** Allows testing the <24h late-cancellation 48h review window on any upcoming session. */
+  simulateLateWindow?: boolean;
+}
+
+export interface SubmitCancellationObjectionInput {
+  sessionId: ID;
+  reason: string;
+}
+
+export type MonetaryPaymentMethod = 'cash_or_transfer' | 'mercadopago';
+
+export type MonetaryPaymentStatus =
+  | 'pending'
+  | 'reported_by_payer'
+  | 'confirmed_by_payee'
+  | 'disputed'
+  | 'refunded';
+
+/**
+ * Separate accounting record for the ARS portion of 'money' or 'mixed' sessions.
+ * Strictly separated from CreditLedgerEntry so credits and ARS never mix in one ledger.
+ */
+export interface MonetaryPayment {
+  id: ID;
+  sessionId: ID;
+  activityTitle: string;
+  payerId: ID;
+  payeeId: ID;
+  amountCents: number;
+  currency: 'ARS';
+  method: MonetaryPaymentMethod;
+  status: MonetaryPaymentStatus;
+  externalRef?: string;
+  createdAt: UtcTimestamp;
+  updatedAt: UtcTimestamp;
+}
+
+export interface ReportMonetaryPaymentInput {
+  sessionId: ID;
+  method: MonetaryPaymentMethod;
+  externalRef?: string;
+}
+
+export interface ConfirmMonetaryPaymentInput {
+  sessionId: ID;
 }
 
 export interface SafetyReportInput {
@@ -202,6 +253,7 @@ export interface CreditLedgerEntry {
   type: CreditTxType;
   amount: number; // + received, − sent
   sessionId?: ID;
+  idempotencyKey?: string;
   memo: string;
   createdAt: UtcTimestamp;
   status: 'posted' | 'pending';
@@ -216,6 +268,25 @@ export interface CreditWallet {
   spentTotal: number;
   maxBalance: number | null;
   entries: CreditLedgerEntry[];
+}
+
+export interface LedgerInvariantCheck {
+  id: string;
+  name: string;
+  passed: boolean;
+  detail: string;
+}
+
+export interface LedgerIntegrityReport {
+  healthy: boolean;
+  checkedAt: UtcTimestamp;
+  available: number;
+  heldInEscrow: number;
+  incomingPending: number;
+  maxBalance: number;
+  circulationRatio: number;
+  softCapReached: boolean;
+  invariants: LedgerInvariantCheck[];
 }
 
 export interface Review {

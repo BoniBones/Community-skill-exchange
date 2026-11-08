@@ -20,6 +20,8 @@ export function formatARS(cents: number): string {
   return `${pesos < 0 ? '−' : ''}$ ${grouped}`;
 }
 
+export const formatMoneyCents = formatARS;
+
 /** Human summary of a payment arrangement, e.g. "1 crédito + $ 2.000". */
 export function formatPayment(p: PaymentArrangement): string {
   switch (p.mode) {
