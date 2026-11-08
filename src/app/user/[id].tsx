@@ -1,4 +1,5 @@
 import { useLocalSearchParams } from 'expo-router';
+import { useState } from 'react';
 import { View } from 'react-native';
 
 import { ActivityCard, Rating, Stars } from '../../components/activity';
@@ -6,16 +7,23 @@ import { getNeighborhood, skillName } from '../../domain/catalog';
 import { formatShortDate } from '../../lib/dates';
 import { profiles } from '../../mocks/data';
 import {
+  useBlockedUsers,
   useCurrentUserId,
   useInstructorActivities,
   useProfile,
+  useReportOrBlockUser,
   useReviewsAbout,
 } from '../../services/queries';
 import { DemoBanner, ErrorState, LoadingState, Screen, SectionHeader } from '../../ui/layout';
-import { Avatar, Badge, Card, Chip, Text } from '../../ui/primitives';
+import { Avatar, Badge, Button, Card, Chip, Text } from '../../ui/primitives';
 import { colors, spacing } from '../../ui/theme';
 
 const profileMap = new Map(profiles.map((p) => [p.id, p]));
+const reportReasons = [
+  'Solicitó datos privados o domicilio particular',
+  'Conducta inapropiada o trato irrespetuoso',
+  'Publicación engañosa o spam comercial',
+];
 
 export default function PublicUserProfileScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -24,6 +32,12 @@ export default function PublicUserProfileScreen() {
   const viewer = useProfile(viewerId);
   const activities = useInstructorActivities(id);
   const reviews = useReviewsAbout(id);
+  const blockedUsers = useBlockedUsers(viewerId);
+  const reportOrBlock = useReportOrBlockUser(viewerId);
+
+  const [showSafetyPanel, setShowSafetyPanel] = useState(false);
+  const [selectedReason, setSelectedReason] = useState(reportReasons[0]!);
+  const [safetySubmitted, setSafetySubmitted] = useState<string | null>(null);
 
   if (user.isLoading) {
     return (
@@ -45,10 +59,34 @@ export default function PublicUserProfileScreen() {
   const offers = p.skills.filter((s) => s.kind === 'offers');
   const wants = p.skills.filter((s) => s.kind === 'wants');
   const viewerOffers = new Set((viewer.data?.skills ?? []).filter((s) => s.kind === 'offers').map((s) => s.skillId));
+  const isBlocked = (blockedUsers.data ?? []).includes(p.id);
+
+  const handleSafetySubmit = async (blockUser: boolean) => {
+    await reportOrBlock.mutateAsync({
+      targetUserId: p.id,
+      reason: selectedReason,
+      blockUser,
+    });
+    setSafetySubmitted(
+      blockUser
+        ? `Reporte enviado y ${p.displayName} fue bloqueado/a. Sus actividades ya no aparecerán en tu exploración.`
+        : 'Reporte enviado al equipo de moderación comunitaria.',
+    );
+    setShowSafetyPanel(false);
+  };
 
   return (
     <Screen edges={['bottom']}>
       <DemoBanner compact />
+
+      {isBlocked ? (
+        <Card style={{ backgroundColor: colors.dangerSoft, borderColor: colors.danger }}>
+          <Badge label="USUARIO BLOQUEADO" fg={colors.danger} bg="#FECACA" icon="ban-outline" />
+          <Text variant="caption" color={colors.danger}>
+            Bloqueaste a esta persona. Sus actividades están ocultas de tus recomendaciones y búsquedas.
+          </Text>
+        </Card>
+      ) : null}
 
       <Card style={{ gap: spacing.md }}>
         <View style={{ flexDirection: 'row', gap: spacing.md, alignItems: 'center' }}>
@@ -152,6 +190,56 @@ export default function PublicUserProfileScreen() {
           ))
         )}
       </View>
+
+      {/* Trust & Safety */}
+      {p.id !== viewerId ? (
+        <Card style={{ backgroundColor: colors.surfaceAlt, gap: spacing.sm }}>
+          <Text variant="bodyStrong">Seguridad y moderación comunitaria</Text>
+          {safetySubmitted ? (
+            <Text variant="caption" color={colors.primary} style={{ fontWeight: '600' }}>
+              {safetySubmitted}
+            </Text>
+          ) : showSafetyPanel ? (
+            <View style={{ gap: spacing.sm }}>
+              <Text variant="caption" color={colors.textMuted}>
+                Seleccioná el motivo del reporte:
+              </Text>
+              {reportReasons.map((reason) => (
+                <Chip
+                  key={reason}
+                  label={reason}
+                  selected={selectedReason === reason}
+                  tone={colors.danger}
+                  onPress={() => setSelectedReason(reason)}
+                />
+              ))}
+              <Button
+                title="Solo enviar reporte a moderación"
+                variant="secondary"
+                icon="flag-outline"
+                loading={reportOrBlock.isPending}
+                fullWidth
+                onPress={() => handleSafetySubmit(false)}
+              />
+              <Button
+                title="Reportar y bloquear usuario"
+                variant="danger"
+                icon="ban-outline"
+                loading={reportOrBlock.isPending}
+                fullWidth
+                onPress={() => handleSafetySubmit(true)}
+              />
+            </View>
+          ) : (
+            <Button
+              title="Reportar o bloquear usuario"
+              variant="ghost"
+              icon="flag-outline"
+              onPress={() => setShowSafetyPanel(true)}
+            />
+          )}
+        </Card>
+      ) : null}
     </Screen>
   );
 }

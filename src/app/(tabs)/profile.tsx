@@ -3,6 +3,7 @@ import { View } from 'react-native';
 
 import { ActivityCard, Rating, Stars } from '../../components/activity';
 import { getNeighborhood, skillName } from '../../domain/catalog';
+import { useAuth } from '../../features/auth/authContext';
 import { formatShortDate } from '../../lib/dates';
 import { profiles } from '../../mocks/data';
 import {
@@ -18,6 +19,7 @@ import { colors, spacing } from '../../ui/theme';
 const profileMap = new Map(profiles.map((p) => [p.id, p]));
 
 export default function ProfileScreen() {
+  const { resetToNewOnboarding, signOut } = useAuth();
   const { data: userId } = useCurrentUserId();
   const me = useProfile(userId);
   const myActivities = useInstructorActivities(userId);
@@ -95,6 +97,14 @@ export default function ProfileScreen() {
             </Text>
           </View>
         </View>
+
+        <Button
+          title="Editar perfil y habilidades"
+          variant="secondary"
+          icon="create-outline"
+          fullWidth
+          onPress={() => router.push('/edit-profile')}
+        />
       </Card>
 
       {/* Skills offered & wanted */}
@@ -162,17 +172,39 @@ export default function ProfileScreen() {
         })}
       </View>
 
-      {/* Developer / Diagnostics link */}
+      {/* Onboarding & Diagnostics shortcuts */}
       <Card style={{ backgroundColor: colors.surfaceAlt, gap: spacing.sm }}>
-        <Text variant="bodyStrong">Entorno de desarrollo y vista previa</Text>
+        <Text variant="bodyStrong">Cuenta, Onboarding y Diagnóstico</Text>
         <Text variant="caption" color={colors.textMuted}>
-          Verificá el estado de conexión con Supabase, la versión de Expo SDK y la configuración de zona horaria.
+          Podés probar el flujo completo de bienvenida, verificación +18 y selección de habilidades o abrir el
+          diagnóstico técnico de Expo Go y Supabase.
         </Text>
+        <Button
+          title="Probar flujo de Onboarding (3 pasos)"
+          variant="secondary"
+          icon="sparkles-outline"
+          fullWidth
+          onPress={() => {
+            resetToNewOnboarding();
+            router.push('/(onboarding)/eligibility');
+          }}
+        />
         <Button
           title="Abrir diagnóstico técnico"
           variant="secondary"
           icon="pulse-outline"
+          fullWidth
           onPress={() => router.push('/dev')}
+        />
+        <Button
+          title="Volver a pantalla de bienvenida"
+          variant="ghost"
+          icon="log-out-outline"
+          fullWidth
+          onPress={() => {
+            signOut();
+            router.replace('/welcome');
+          }}
         />
       </Card>
     </Screen>

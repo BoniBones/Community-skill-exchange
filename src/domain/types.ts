@@ -48,6 +48,8 @@ export interface Neighborhood {
   name: string;
 }
 
+export type ProfileStatus = 'pending_eligibility' | 'active' | 'restricted' | 'suspended';
+
 export interface Profile {
   id: ID;
   displayName: string;
@@ -62,6 +64,23 @@ export interface Profile {
   completedSessions: number;
   /** Sessions taught + sessions attended; a simple community participation signal. */
   communityContributions: number;
+  status?: ProfileStatus;
+}
+
+export interface EligibilitySubmission {
+  birthYear: number;
+  birthMonth: number; // 1-12
+  birthDay: number; // 1-31
+  acceptedSafetyRules: boolean;
+  guardianEmail?: string;
+}
+
+export interface ProfileUpdateInput {
+  displayName: string;
+  neighborhoodId: ID;
+  bio: string;
+  availabilitySummary: string;
+  skills: UserSkill[];
 }
 
 export type PaymentMode = 'credits' | 'money' | 'mixed';
@@ -121,6 +140,19 @@ export interface Session {
   state: SessionState;
   /** Price snapshot copied at booking time; later edits to the activity don't change it. */
   price: PaymentArrangement;
+  learnerNote?: string;
+}
+
+export interface SessionRequestInput {
+  activityId: ID;
+  startsAt: UtcTimestamp;
+  learnerNote?: string;
+}
+
+export interface SafetyReportInput {
+  targetUserId: ID;
+  reason: string;
+  blockUser: boolean;
 }
 
 export type CreditTxType = 'incentive' | 'hold' | 'release' | 'refund' | 'penalty' | 'adjustment';

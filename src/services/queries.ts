@@ -1,12 +1,19 @@
 /**
- * React Query hooks: the only way screens read data.
+ * React Query hooks: the only way screens read and mutate data.
  * The repository is picked once from config.dataMode. Until the Supabase
  * repository lands in Stage 3, 'supabase' mode still falls back to mock data,
  * and the UI keeps showing the DEMO badge so nothing simulated looks real.
  */
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import type { ActivityFilters, ID } from '../domain/types';
+import type {
+  ActivityFilters,
+  EligibilitySubmission,
+  ID,
+  ProfileUpdateInput,
+  SafetyReportInput,
+  SessionRequestInput,
+} from '../domain/types';
 import { mockRepository } from './mockRepository';
 import type { Repository } from './repository';
 
@@ -24,6 +31,7 @@ export const queryKeys = {
   session: (id: ID) => ['session', id] as const,
   wallet: (id: ID) => ['wallet', id] as const,
   reviewsAbout: (id: ID) => ['reviews', id] as const,
+  blockedUsers: (id: ID) => ['blocked-users', id] as const,
 };
 
 export function useCurrentUserId() {
@@ -95,5 +103,66 @@ export function useReviewsAbout(userId: ID | undefined) {
     queryKey: queryKeys.reviewsAbout(userId ?? ''),
     queryFn: () => repository.listReviewsAbout(userId!),
     enabled: !!userId,
+  });
+}
+
+export function useBlockedUsers(userId: ID | undefined) {
+  return useQuery({
+    queryKey: queryKeys.blockedUsers(userId ?? ''),
+    queryFn: () => repository.listBlockedUserIds(userId!),
+    enabled: !!userId,
+  });
+}
+
+/* ───────────────────────── Stage 2 Mutations ───────────────────────── */
+
+export function useSubmitEligibility(userId: ID | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: EligibilitySubmission) => repository.submitEligibility(userId!, input),
+    onSuccess: () => {
+      if (userId) qc.invalidateQueries({ queryKey: queryKeys.profile(userId) });
+    },
+  });
+}
+
+export function useUpdateProfile(userId: ID | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ProfileUpdateInput) => repository.updateProfile(userId!, input),
+    onSuccess: () => {
+      if (userId) {
+        qc.invalidateQueries({ queryKey: queryKeys.profile(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.recommendations(userId) });
+        qc.invalidateQueries({ queryKey: ['activities'] });
+      }
+    },
+  });
+}
+
+export function useRequestSession(userId: ID | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: SessionRequestInput) => repository.requestSession(userId!, input),
+    onSuccess: () => {
+      if (userId) {
+        qc.invalidateQueries({ queryKey: queryKeys.sessions(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.wallet(userId) });
+      }
+    },
+  });
+}
+
+export function useReportOrBlockUser(userId: ID | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: SafetyReportInput) => repository.reportOrBlockUser(userId!, input),
+    onSuccess: () => {
+      if (userId) {
+        qc.invalidateQueries({ queryKey: queryKeys.blockedUsers(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.recommendations(userId) });
+        qc.invalidateQueries({ queryKey: ['activities'] });
+      }
+    },
   });
 }

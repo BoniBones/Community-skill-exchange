@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 import { View } from 'react-native';
 
+import { useAuth } from '../features/auth/authContext';
 import { DemoBanner, Screen } from '../ui/layout';
 import { Button, IconCircle, Text, type IconName } from '../ui/primitives';
 import { colors, radius, spacing } from '../ui/theme';
@@ -22,11 +23,13 @@ const pillars: { icon: IconName; color: string; title: string; body: string }[] 
     icon: 'people-outline',
     color: colors.accent,
     title: 'Conectá',
-    body: 'Conocé gente de Santo Tomás, Pilar y Derqui con intereses como los tuyos.',
+    body: 'Conocé gente de Santo Tomás, Pilar y Derqui con intereses como los tuyos en espacios públicos seguros.',
   },
 ];
 
 export default function Welcome() {
+  const { resetToNewOnboarding } = useAuth();
+
   return (
     <Screen edges={['top', 'bottom']} contentStyle={{ gap: spacing.xl, paddingTop: spacing.xl }}>
       <View style={{ gap: spacing.md }}>
@@ -78,10 +81,31 @@ export default function Welcome() {
         ))}
       </View>
 
-      <View style={{ gap: spacing.md }}>
+      <View style={{ gap: spacing.sm }}>
         <DemoBanner />
-        <Button title="Explorar la comunidad (demo)" icon="compass-outline" fullWidth onPress={() => router.replace('/(tabs)')} />
-        <Button title="Crear cuenta o ingresar" variant="secondary" fullWidth onPress={() => router.push('/sign-in')} />
+        <Button
+          title="Crear cuenta y configurar perfil"
+          icon="person-add-outline"
+          fullWidth
+          onPress={() => {
+            resetToNewOnboarding();
+            router.push({ pathname: '/sign-in', params: { mode: 'register' } });
+          }}
+        />
+        <Button
+          title="Ya tengo cuenta (Ingresar con código)"
+          variant="secondary"
+          icon="mail-outline"
+          fullWidth
+          onPress={() => router.push({ pathname: '/sign-in', params: { mode: 'login' } })}
+        />
+        <Button
+          title="Explorar directo como Sofía (Demo rápida)"
+          variant="ghost"
+          icon="compass-outline"
+          fullWidth
+          onPress={() => router.replace('/(tabs)')}
+        />
       </View>
     </Screen>
   );

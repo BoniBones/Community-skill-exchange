@@ -1,14 +1,21 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { useState } from 'react';
-import { View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { TextInput, View } from 'react-native';
 
 import { PaymentPill, Rating } from '../../components/activity';
 import { categoryOfSkill, getNeighborhood, skillName } from '../../domain/catalog';
-import { formatDuration, formatPayment, paymentModeLabel } from '../../lib/format';
-import { useActivity, useCurrentUserId, useProfile } from '../../services/queries';
+import { formatSessionDate } from '../../lib/dates';
+import { formatCredits, formatDuration, formatPayment, paymentModeLabel } from '../../lib/format';
+import {
+  useActivity,
+  useCurrentUserId,
+  useProfile,
+  useRequestSession,
+  useWallet,
+} from '../../services/queries';
 import { DemoBanner, ErrorState, InfoRow, LoadingState, Screen } from '../../ui/layout';
-import { Avatar, Badge, Button, Card, IconCircle, Text, type IconName } from '../../ui/primitives';
-import { colors, spacing } from '../../ui/theme';
+import { Avatar, Badge, Button, Card, Chip, IconCircle, Text, type IconName } from '../../ui/primitives';
+import { colors, radius, spacing } from '../../ui/theme';
 
 const formatLabel = {
   in_person: 'Presencial',
@@ -16,13 +23,37 @@ const formatLabel = {
   either: 'Presencial u online',
 };
 
+/** Generates 3 upcoming candidate UTC timestamps at 18:00 / 19:00 / 10:00 Buenos Aires time (UTC−3). */
+function generateCandidateSlots(): string[] {
+  const slots: string[] = [];
+  const offsets = [
+    { days: 2, hourBA: 18 },
+    { days: 4, hourBA: 19 },
+    { days: 5, hourBA: 10 },
+  ];
+  for (const o of offsets) {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() + o.days);
+    d.setUTCHours(o.hourBA + 3, 0, 0, 0);
+    slots.push(d.toISOString());
+  }
+  return slots;
+}
+
 export default function ActivityDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: viewerId } = useCurrentUserId();
   const activity = useActivity(id);
   const instructor = useProfile(activity.data?.instructorId);
   const viewer = useProfile(viewerId);
-  const [requestedDemo, setRequestedDemo] = useState(false);
+  const wallet = useWallet(viewerId);
+  const requestSession = useRequestSession(viewerId);
+
+  const candidateSlots = useMemo(() => generateCandidateSlots(), []);
+  const [selectedSlot, setSelectedSlot] = useState<string>(candidateSlots[0]!);
+  const [learnerNote, setLearnerNote] = useState('');
+  const [createdSessionId, setCreatedSessionId] = useState<string | null>(null);
+  const [bookingError, setBookingError] = useState<string | null>(null);
 
   if (activity.isLoading || instructor.isLoading) {
     return (
@@ -48,6 +79,20 @@ export default function ActivityDetailScreen() {
   // Check reciprocal match between viewer and instructor
   const viewerOffers = new Set((viewer.data?.skills ?? []).filter((s) => s.kind === 'offers').map((s) => s.skillId));
   const reciprocalSkill = inst.skills.find((s) => s.kind === 'wants' && viewerOffers.has(s.skillId));
+
+  const handleBook = async () => {
+    setBookingError(null);
+    try {
+      const created = await requestSession.mutateAsync({
+        activityId: a.id,
+        startsAt: selectedSlot,
+        learnerNote,
+      });
+      setCreatedSessionId(created.id);
+    } catch (e) {
+      setBookingError(e instanceof Error ? e.message : 'No se pudo solicitar la sesión.');
+    }
+  };
 
   return (
     <Screen edges={['bottom']}>
@@ -98,6 +143,11 @@ export default function ActivityDetailScreen() {
               ? 'El instructor ofrece esta actividad por un pago monetario acordado directamente entre las partes.'
               : 'Combina créditos comunitarios (en custodia) y un aporte en dinero acordado con el instructor.'}
         </Text>
+        {a.payment.mode !== 'money' && wallet.data ? (
+          <Text variant="caption" color={colors.credit} style={{ fontWeight: '600' }}>
+            Tu saldo disponible: {formatCredits(wallet.data.available)}
+          </Text>
+        ) : null}
       </Card>
 
       {/* Description & logistics */}
@@ -142,7 +192,7 @@ export default function ActivityDetailScreen() {
         </Text>
       </Card>
 
-      {/* Action */}
+      {/* Booking section */}
       {isOwnActivity ? (
         <Button
           title="Gestionar mis actividades"
@@ -151,24 +201,78 @@ export default function ActivityDetailScreen() {
           fullWidth
           onPress={() => router.push('/my-activities')}
         />
-      ) : requestedDemo ? (
-        <Card style={{ backgroundColor: colors.primarySoft, borderColor: colors.primary, gap: spacing.xs }}>
-          <Badge label="SIMULACIÓN DE DEMO" fg={colors.primary} bg="#99F6E4" icon="flask-outline" />
+      ) : createdSessionId ? (
+        <Card style={{ backgroundColor: colors.primarySoft, borderColor: colors.primary, gap: spacing.sm }}>
+          <Badge label="SESIÓN SOLICITADA (DEMO)" fg={colors.primary} bg="#99F6E4" icon="checkmark-circle-outline" />
           <Text variant="bodyStrong" color={colors.primary}>
-            Vista previa de solicitud: {formatPayment(a.payment)}
+            ¡Solicitud enviada para el {formatSessionDate(selectedSlot)}!
           </Text>
           <Text variant="caption" color={colors.textMuted}>
-            En la Etapa 3 (Supabase) esta acción creará la sesión en estado «requested» y pondrá los créditos en
-            custodia de forma atómica. Ninguna reserva real fue creada ahora.
+            {a.payment.mode !== 'money'
+              ? `Se pusieron ${formatCredits(a.payment.creditAmount ?? 0)} en custodia (Escrow). Podés ver la sesión en la pestaña «Sesiones» y el movimiento en «Créditos».`
+              : 'La sesión quedó en estado «SOLICITADA». Podés verla en la pestaña «Sesiones».'}
           </Text>
+          <Button
+            title="Abrir detalle de la sesión"
+            icon="calendar-outline"
+            fullWidth
+            onPress={() => router.push({ pathname: '/session/[id]', params: { id: createdSessionId } })}
+          />
         </Card>
       ) : (
-        <Button
-          title={`Solicitar sesión (${formatPayment(a.payment)})`}
-          icon="calendar-outline"
-          fullWidth
-          onPress={() => setRequestedDemo(true)}
-        />
+        <Card style={{ gap: spacing.md }}>
+          <Text variant="heading">Coordinar fecha y horario</Text>
+          <Text variant="caption" color={colors.textMuted}>
+            Elegí un turno disponible (hora de Buenos Aires):
+          </Text>
+          <View style={{ gap: spacing.xs }}>
+            {candidateSlots.map((slot) => (
+              <Chip
+                key={slot}
+                label={formatSessionDate(slot)}
+                icon="calendar-outline"
+                selected={selectedSlot === slot}
+                onPress={() => setSelectedSlot(slot)}
+              />
+            ))}
+          </View>
+
+          <View style={{ gap: 4 }}>
+            <Text variant="label" color={colors.textMuted}>
+              MENSAJE OPCIONAL PARA {inst.displayName.split(' ')[0].toUpperCase()}
+            </Text>
+            <TextInput
+              value={learnerNote}
+              onChangeText={setLearnerNote}
+              placeholder="Contale tu nivel actual o qué te gustaría practicar…"
+              placeholderTextColor={colors.textMuted}
+              style={{
+                backgroundColor: colors.bg,
+                borderWidth: 1,
+                borderColor: colors.border,
+                borderRadius: radius.md,
+                paddingHorizontal: spacing.md,
+                minHeight: 44,
+                fontSize: 14,
+                color: colors.text,
+              }}
+            />
+          </View>
+
+          {bookingError ? (
+            <Text variant="caption" color={colors.danger}>
+              {bookingError}
+            </Text>
+          ) : null}
+
+          <Button
+            title={`Solicitar sesión (${formatPayment(a.payment)})`}
+            icon="calendar-outline"
+            loading={requestSession.isPending}
+            fullWidth
+            onPress={handleBook}
+          />
+        </Card>
       )}
     </Screen>
   );

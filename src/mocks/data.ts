@@ -403,6 +403,14 @@ export const ledger: CreditLedgerEntry[] = [
     status: 'posted',
   },
   {
+    id: 'tx-3b',
+    type: 'release',
+    amount: 2,
+    memo: 'Enseñaste piano a Martín (2 sesiones verificadas)',
+    createdAt: at(-8, 18, 30),
+    status: 'posted',
+  },
+  {
     id: 'tx-4',
     type: 'hold',
     amount: -1,
