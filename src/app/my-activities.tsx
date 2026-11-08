@@ -1,6 +1,9 @@
+import { router } from 'expo-router';
 import { View } from 'react-native';
 
-import { ActivityCard } from '../components/activity';
+import { PaymentPill } from '../components/activity';
+import { skillName } from '../domain/catalog';
+import { formatDuration } from '../lib/format';
 import {
   useCurrentUserId,
   useInstructorActivities,
@@ -34,6 +37,23 @@ export default function MyActivitiesScreen() {
         </Text>
       </View>
 
+      {/* Quick actions */}
+      <View style={{ gap: spacing.sm }}>
+        <Button
+          title="Publicar nueva actividad"
+          icon="add-circle-outline"
+          fullWidth
+          onPress={() => router.push('/activity-form')}
+        />
+        <Button
+          title="Configurar mi disponibilidad horaria"
+          variant="secondary"
+          icon="calendar-outline"
+          fullWidth
+          onPress={() => router.push('/availability')}
+        />
+      </View>
+
       {/* Payment model explanation */}
       <Card style={{ gap: spacing.sm, backgroundColor: colors.surfaceAlt }}>
         <Badge label="MODELO ECONÓMICO FLEXIBLE" fg={colors.primary} bg={colors.primarySoft} icon="options-outline" />
@@ -47,23 +67,47 @@ export default function MyActivitiesScreen() {
 
       <View style={{ gap: spacing.md }}>
         <SectionHeader
-          title="Publicadas actualmente"
-          subtitle="Tocá una actividad para inspeccionar su vista pública"
+          title={`Mis actividades (${(activities.data ?? []).length})`}
+          subtitle="Podés editar el acuerdo de pago, pausar o abrir la vista pública"
         />
         {(activities.data ?? []).map((a) => (
-          <ActivityCard key={a.id} activity={a} instructor={me.data} />
+          <Card key={a.id} style={{ gap: spacing.md }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Badge
+                label={a.status === 'published' ? 'PUBLICADA' : 'PAUSADA'}
+                fg={a.status === 'published' ? colors.money : colors.textMuted}
+                bg={a.status === 'published' ? colors.moneySoft : colors.surfaceAlt}
+              />
+              <Text variant="caption" color={colors.textMuted}>
+                {skillName(a.skillId)} · {formatDuration(a.durationMin)}
+              </Text>
+            </View>
+            <View style={{ gap: 2 }}>
+              <Text variant="heading">{a.title}</Text>
+              <Text variant="caption" color={colors.textMuted}>
+                📍 {a.meetingArea} · 🗓️ {a.availabilitySummary}
+              </Text>
+            </View>
+            <PaymentPill payment={a.payment} size="sm" />
+            <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+              <Button
+                title="Editar"
+                variant="secondary"
+                icon="create-outline"
+                style={{ flex: 1 }}
+                onPress={() => router.push({ pathname: '/activity-form', params: { id: a.id } })}
+              />
+              <Button
+                title="Vista pública"
+                variant="ghost"
+                icon="open-outline"
+                style={{ flex: 1 }}
+                onPress={() => router.push({ pathname: '/activity/[id]', params: { id: a.id } })}
+              />
+            </View>
+          </Card>
         ))}
       </View>
-
-      <Card style={{ gap: spacing.sm }}>
-        <Badge label="PRÓXIMAMENTE · ETAPA 3" fg={colors.info} bg={colors.infoSoft} icon="construct-outline" />
-        <Text variant="bodyStrong">Publicar o editar actividades</Text>
-        <Text variant="caption" color={colors.textMuted}>
-          El formulario de creación y edición conectará directamente con las tablas «activities» y
-          «payment_arrangements» en Supabase durante la Etapa 3.
-        </Text>
-        <Button title="Nueva actividad (disponible en Etapa 3)" icon="add-circle-outline" disabled fullWidth />
-      </Card>
     </Screen>
   );
 }

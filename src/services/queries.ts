@@ -1,18 +1,19 @@
 /**
  * React Query hooks: the only way screens read and mutate data.
- * The repository is picked once from config.dataMode. Until the Supabase
- * repository lands in Stage 3, 'supabase' mode still falls back to mock data,
- * and the UI keeps showing the DEMO badge so nothing simulated looks real.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import type {
   ActivityFilters,
+  ActivityUpsertInput,
+  AvailabilityUpdateInput,
   EligibilitySubmission,
   ID,
   ProfileUpdateInput,
   SafetyReportInput,
+  SessionCancelInput,
   SessionRequestInput,
+  SessionResponseInput,
 } from '../domain/types';
 import { mockRepository } from './mockRepository';
 import type { Repository } from './repository';
@@ -114,7 +115,7 @@ export function useBlockedUsers(userId: ID | undefined) {
   });
 }
 
-/* ───────────────────────── Stage 2 Mutations ───────────────────────── */
+/* ───────────────────────── Mutations ───────────────────────── */
 
 export function useSubmitEligibility(userId: ID | undefined) {
   const qc = useQueryClient();
@@ -140,12 +141,68 @@ export function useUpdateProfile(userId: ID | undefined) {
   });
 }
 
+export function useUpdateAvailability(userId: ID | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: AvailabilityUpdateInput) => repository.updateAvailability(userId!, input),
+    onSuccess: () => {
+      if (userId) {
+        qc.invalidateQueries({ queryKey: queryKeys.profile(userId) });
+      }
+    },
+  });
+}
+
+export function useUpsertActivity(userId: ID | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ActivityUpsertInput) => repository.upsertActivity(userId!, input),
+    onSuccess: ({ activity }) => {
+      if (userId) {
+        qc.invalidateQueries({ queryKey: queryKeys.instructorActivities(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.activity(activity.id) });
+        qc.invalidateQueries({ queryKey: ['activities'] });
+        qc.invalidateQueries({ queryKey: queryKeys.profile(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.wallet(userId) });
+      }
+    },
+  });
+}
+
 export function useRequestSession(userId: ID | undefined) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: SessionRequestInput) => repository.requestSession(userId!, input),
     onSuccess: () => {
       if (userId) {
+        qc.invalidateQueries({ queryKey: queryKeys.sessions(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.wallet(userId) });
+      }
+    },
+  });
+}
+
+export function useRespondToSession(userId: ID | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: SessionResponseInput) => repository.respondToSession(userId!, input),
+    onSuccess: (session) => {
+      if (userId) {
+        qc.invalidateQueries({ queryKey: queryKeys.session(session.id) });
+        qc.invalidateQueries({ queryKey: queryKeys.sessions(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.wallet(userId) });
+      }
+    },
+  });
+}
+
+export function useCancelSession(userId: ID | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: SessionCancelInput) => repository.cancelSession(userId!, input),
+    onSuccess: ({ session }) => {
+      if (userId) {
+        qc.invalidateQueries({ queryKey: queryKeys.session(session.id) });
         qc.invalidateQueries({ queryKey: queryKeys.sessions(userId) });
         qc.invalidateQueries({ queryKey: queryKeys.wallet(userId) });
       }

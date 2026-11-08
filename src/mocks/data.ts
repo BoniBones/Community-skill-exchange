@@ -367,6 +367,7 @@ function session(
 
 export const sessions: Session[] = [
   session('ses-karate', 'a-karate', 'u-me', at(2, 19), 'confirmed'),
+  session('ses-english-lucia', 'a-english', 'u-lucia', at(4, 18), 'requested'),
   session('ses-photo', 'a-photo', 'u-me', at(6, 10), 'requested'),
   session('ses-piano-camila', 'a-piano', 'u-camila', at(3, 18), 'confirmed'),
   session('ses-english-diego', 'a-english', 'u-diego', at(-5, 18), 'completed'),

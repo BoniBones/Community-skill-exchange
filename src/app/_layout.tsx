@@ -40,6 +40,8 @@ export default function RootLayout() {
             <Stack.Screen name="user/[id]" options={{ title: 'Perfil' }} />
             <Stack.Screen name="session/[id]" options={{ title: 'Sesión' }} />
             <Stack.Screen name="my-activities" options={{ title: 'Mis actividades' }} />
+            <Stack.Screen name="activity-form" options={{ title: 'Publicar o editar actividad' }} />
+            <Stack.Screen name="availability" options={{ title: 'Mi disponibilidad horaria' }} />
             <Stack.Screen name="edit-profile" options={{ title: 'Editar perfil y habilidades' }} />
             <Stack.Screen name="dev" options={{ title: 'Diagnóstico' }} />
           </Stack>

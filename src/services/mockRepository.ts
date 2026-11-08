@@ -1,15 +1,20 @@
 /**
  * In-memory repository backed by src/mocks/data.ts. DEMO ONLY: it simulates
- * network latency and in-session mutations (onboarding, profile edits, booking
- * requests with credit escrow holds, and blocking users), but nothing is persisted
- * across app restarts.
+ * network latency and in-session mutations (onboarding, profile edits, activity
+ * publishing with flexible payment arrangements, availability windows, booking
+ * requests with credit escrow holds, session confirm/decline/cancel, and blocking
+ * users), but nothing is persisted across app restarts.
  */
 import { categoryOfSkill, skillName } from '../domain/catalog';
 import type {
+  Activity,
   ActivityRecommendation,
+  AvailabilityWindow,
   CreditWallet,
+  DayPeriod,
   ID,
   MatchKind,
+  PaymentArrangement,
   ProfileStatus,
   Session,
 } from '../domain/types';
@@ -20,6 +25,7 @@ const delay = (ms = 200) => new Promise((r) => setTimeout(r, ms));
 
 const MAX_BALANCE = 20;
 const MIN_PILOT_AGE = 18;
+const CANCELLATION_DEADLINE_HOURS = 24;
 
 const blockedByUser = new Map<ID, Set<ID>>();
 
@@ -40,6 +46,55 @@ function calculateAge(year: number, month: number, day: number): number {
     age -= 1;
   }
   return age;
+}
+
+function validatePaymentArrangement(p: PaymentArrangement): PaymentArrangement {
+  if (p.mode === 'credits') {
+    if (!p.creditAmount || p.creditAmount <= 0) {
+      throw new Error('En modalidad «Solo créditos» debés indicar una cantidad mayor a 0.');
+    }
+    return { mode: 'credits', creditAmount: p.creditAmount, currency: 'ARS' };
+  }
+  if (p.mode === 'money') {
+    if (!p.moneyAmountCents || p.moneyAmountCents <= 0) {
+      throw new Error('En modalidad «Solo dinero» debés indicar un monto en ARS mayor a 0.');
+    }
+    return { mode: 'money', moneyAmountCents: p.moneyAmountCents, currency: 'ARS' };
+  }
+  if (!p.creditAmount || p.creditAmount <= 0 || !p.moneyAmountCents || p.moneyAmountCents <= 0) {
+    throw new Error('En modalidad «Pago mixto» debés indicar tanto créditos (> 0) como un monto en ARS (> 0).');
+  }
+  return {
+    mode: 'mixed',
+    creditAmount: p.creditAmount,
+    moneyAmountCents: p.moneyAmountCents,
+    currency: 'ARS',
+  };
+}
+
+const WEEKDAY_NAMES = ['Domingos', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábados'];
+const PERIOD_NAMES: Record<DayPeriod, string> = {
+  morning: 'mañana (9–12 h)',
+  afternoon: 'tarde (15–18 h)',
+  evening: 'noche (18–21 h)',
+};
+
+export function summarizeAvailability(windows: AvailabilityWindow[], customNote?: string): string {
+  if (windows.length === 0) {
+    return customNote?.trim() || 'A coordinar';
+  }
+  const byDay = new Map<number, DayPeriod[]>();
+  for (const w of windows) {
+    const list = byDay.get(w.weekday) ?? [];
+    if (!list.includes(w.period)) list.push(w.period);
+    byDay.set(w.weekday, list);
+  }
+  const parts: string[] = [];
+  for (const [day, periods] of Array.from(byDay.entries()).sort((a, b) => a[0] - b[0])) {
+    parts.push(`${WEEKDAY_NAMES[day]} (${periods.map((p) => PERIOD_NAMES[p]).join(', ')})`);
+  }
+  const summary = parts.join(' · ');
+  return customNote?.trim() ? `${summary} — ${customNote.trim()}` : summary;
 }
 
 function computeWallet(): CreditWallet {
@@ -70,11 +125,17 @@ export const mockRepository: Repository = {
   async getProfile(id) {
     await delay();
     const p = db.profiles.find((x) => x.id === id);
-    return p ? { ...p, skills: [...p.skills] } : null;
+    return p
+      ? {
+          ...p,
+          skills: [...p.skills],
+          availabilityWindows: p.availabilityWindows ? [...p.availabilityWindows] : undefined,
+        }
+      : null;
   },
 
   async updateProfile(userId, input) {
-    await delay(250);
+    await delay(200);
     const idx = db.profiles.findIndex((p) => p.id === userId);
     if (idx < 0) throw new Error('Perfil no encontrado');
     const updated = {
@@ -90,8 +151,22 @@ export const mockRepository: Repository = {
     return { ...updated, skills: [...updated.skills] };
   },
 
+  async updateAvailability(userId, input) {
+    await delay(200);
+    const idx = db.profiles.findIndex((p) => p.id === userId);
+    if (idx < 0) throw new Error('Perfil no encontrado');
+    const summary = summarizeAvailability(input.windows, input.customNote);
+    const updated = {
+      ...db.profiles[idx]!,
+      availabilityWindows: [...input.windows],
+      availabilitySummary: summary,
+    };
+    db.profiles[idx] = updated;
+    return { ...updated, skills: [...updated.skills], availabilityWindows: [...input.windows] };
+  },
+
   async submitEligibility(userId, input) {
-    await delay(250);
+    await delay(200);
     const age = calculateAge(input.birthYear, input.birthMonth, input.birthDay);
     if (!input.acceptedSafetyRules) {
       return {
@@ -133,18 +208,28 @@ export const mockRepository: Repository = {
   async listActivities(filters = {}) {
     await delay();
     const blocked = getBlockedSet(db.CURRENT_USER_ID);
+    const me = db.profiles.find((p) => p.id === db.CURRENT_USER_ID);
+    const myOffers = new Set((me?.skills ?? []).filter((s) => s.kind === 'offers').map((s) => s.skillId));
     const q = filters.query?.trim().toLowerCase();
+
     return db.activities.filter((a) => {
       if (a.status !== 'published') return false;
       if (blocked.has(a.instructorId)) return false;
       if (filters.categoryId && categoryOfSkill(a.skillId)?.id !== filters.categoryId) return false;
       if (filters.paymentMode && a.payment.mode !== filters.paymentMode) return false;
-      if (filters.neighborhoodId) {
-        const instructor = db.profiles.find((p) => p.id === a.instructorId);
-        if (instructor?.neighborhoodId !== filters.neighborhoodId) return false;
+      if (filters.format && a.format !== 'either' && a.format !== filters.format) return false;
+
+      const instructor = db.profiles.find((p) => p.id === a.instructorId);
+      if (filters.neighborhoodId && instructor?.neighborhoodId !== filters.neighborhoodId) return false;
+
+      if (filters.onlyReciprocal) {
+        if (a.instructorId === db.CURRENT_USER_ID || !instructor) return false;
+        const hasReciprocal = instructor.skills.some((s) => s.kind === 'wants' && myOffers.has(s.skillId));
+        if (!hasReciprocal) return false;
       }
+
       if (q) {
-        const haystack = `${a.title} ${a.description} ${skillName(a.skillId)}`.toLowerCase();
+        const haystack = `${a.title} ${a.description} ${skillName(a.skillId)} ${instructor?.displayName ?? ''}`.toLowerCase();
         if (!haystack.includes(q)) return false;
       }
       return true;
@@ -153,12 +238,92 @@ export const mockRepository: Repository = {
 
   async listActivitiesByInstructor(instructorId) {
     await delay();
-    return db.activities.filter((a) => a.instructorId === instructorId);
+    return db.activities.filter((a) => a.instructorId === instructorId && a.status !== 'archived');
   },
 
   async getActivity(id) {
     await delay();
     return db.activities.find((a) => a.id === id) ?? null;
+  },
+
+  async upsertActivity(instructorId, input) {
+    await delay(250);
+    const title = input.title.trim();
+    const description = input.description.trim();
+    const meetingArea = input.meetingArea.trim();
+    if (title.length < 4) throw new Error('El título debe tener al menos 4 caracteres.');
+    if (description.length < 10) throw new Error('La descripción debe tener al menos 10 caracteres.');
+    if (meetingArea.length < 3) throw new Error('Indicá un punto de encuentro público o modalidad.');
+    if (/mi casa|domicilio particular|depto|departamento/i.test(meetingArea)) {
+      throw new Error(
+        'Por seguridad comunitaria, nunca publiques un domicilio particular. Elegí un espacio público (plaza, biblioteca, club, centro cultural) o modalidad online.',
+      );
+    }
+
+    const payment = validatePaymentArrangement(input.payment);
+
+    // Ensure the instructor profile lists this skill under 'offers'
+    const profIdx = db.profiles.findIndex((p) => p.id === instructorId);
+    if (profIdx >= 0) {
+      const prof = db.profiles[profIdx]!;
+      const alreadyOffers = prof.skills.some((s) => s.kind === 'offers' && s.skillId === input.skillId);
+      if (!alreadyOffers) {
+        prof.skills.push({ skillId: input.skillId, kind: 'offers', level: 'advanced' });
+      }
+    }
+
+    if (input.id) {
+      const idx = db.activities.findIndex((a) => a.id === input.id && a.instructorId === instructorId);
+      if (idx < 0) throw new Error('Actividad no encontrada.');
+      const updated: Activity = {
+        ...db.activities[idx]!,
+        skillId: input.skillId,
+        title,
+        description,
+        durationMin: input.durationMin,
+        format: input.format,
+        meetingArea,
+        requirements: input.requirements.trim() || 'Ninguno',
+        availabilitySummary: input.availabilitySummary.trim() || 'A coordinar',
+        payment,
+        status: input.status,
+      };
+      db.activities[idx] = updated;
+      return { activity: updated, grantedIncentive: false };
+    }
+
+    const created: Activity = {
+      id: `a-${Date.now()}`,
+      instructorId,
+      skillId: input.skillId,
+      title,
+      description,
+      durationMin: input.durationMin,
+      format: input.format,
+      meetingArea,
+      requirements: input.requirements.trim() || 'Ninguno',
+      availabilitySummary: input.availabilitySummary.trim() || 'A coordinar',
+      payment,
+      status: input.status,
+    };
+    db.activities.unshift(created);
+
+    // Check if initial participation incentive was already granted
+    const hasIncentive = db.ledger.some((e) => e.type === 'incentive');
+    let grantedIncentive = false;
+    if (!hasIncentive && input.status === 'published') {
+      db.ledger.unshift({
+        id: `tx-inc-${Date.now()}`,
+        type: 'incentive',
+        amount: 2,
+        memo: 'Incentivo de participación: publicaste tu primera actividad en la comunidad',
+        createdAt: new Date().toISOString(),
+        status: 'posted',
+      });
+      grantedIncentive = true;
+    }
+
+    return { activity: created, grantedIncentive };
   },
 
   async getRecommendations(userId) {
@@ -258,6 +423,107 @@ export const mockRepository: Repository = {
     }
 
     return newSession;
+  },
+
+  async respondToSession(userId, input) {
+    await delay(200);
+    const idx = db.sessions.findIndex((s) => s.id === input.sessionId);
+    if (idx < 0) throw new Error('Sesión no encontrada.');
+    const s = db.sessions[idx]!;
+    if (s.instructorId !== userId) {
+      throw new Error('Solo el instructor puede confirmar o rechazar una solicitud.');
+    }
+    if (s.state !== 'requested') {
+      throw new Error('Esta sesión ya no está pendiente de confirmación.');
+    }
+
+    if (input.decision === 'confirm') {
+      const updated: Session = { ...s, state: 'confirmed' };
+      db.sessions[idx] = updated;
+      return updated;
+    }
+
+    // Declined -> refund any held credits
+    const updated: Session = { ...s, state: 'declined' };
+    db.sessions[idx] = updated;
+    const holdIdx = db.ledger.findIndex((e) => e.sessionId === s.id && e.type === 'hold' && e.status === 'pending');
+    if (holdIdx >= 0) {
+      const hold = db.ledger[holdIdx]!;
+      db.ledger[holdIdx] = { ...hold, status: 'posted' };
+      db.ledger.unshift({
+        id: `tx-ref-${Date.now()}`,
+        type: 'refund',
+        amount: Math.abs(hold.amount),
+        sessionId: s.id,
+        memo: 'Reintegro: el instructor no pudo tomar la solicitud',
+        createdAt: new Date().toISOString(),
+        status: 'posted',
+      });
+    }
+    return updated;
+  },
+
+  async cancelSession(userId, input) {
+    await delay(200);
+    const idx = db.sessions.findIndex((s) => s.id === input.sessionId);
+    if (idx < 0) throw new Error('Sesión no encontrada.');
+    const s = db.sessions[idx]!;
+    if (s.learnerId !== userId && s.instructorId !== userId) {
+      throw new Error('No sos participante de esta sesión.');
+    }
+    if (s.state !== 'requested' && s.state !== 'confirmed') {
+      throw new Error('Solo se pueden cancelar sesiones solicitadas o confirmadas.');
+    }
+
+    const hoursUntilStart = (new Date(s.startsAt).getTime() - Date.now()) / 3_600_000;
+    const cancelledByInstructor = s.instructorId === userId;
+    const isTimely = cancelledByInstructor || hoursUntilStart >= CANCELLATION_DEADLINE_HOURS;
+
+    const updated: Session = {
+      ...s,
+      state: 'cancelled',
+      cancellationReason: input.reason.trim() || 'Cancelada por participante',
+    };
+    db.sessions[idx] = updated;
+
+    const holdIdx = db.ledger.findIndex((e) => e.sessionId === s.id && e.type === 'hold' && e.status === 'pending');
+    if (holdIdx >= 0) {
+      const hold = db.ledger[holdIdx]!;
+      if (isTimely) {
+        db.ledger[holdIdx] = { ...hold, status: 'posted' };
+        db.ledger.unshift({
+          id: `tx-ref-${Date.now()}`,
+          type: 'refund',
+          amount: Math.abs(hold.amount),
+          sessionId: s.id,
+          memo: cancelledByInstructor
+            ? 'Reintegro total: el instructor canceló la sesión'
+            : 'Reintegro total: cancelaste con más de 24 h de anticipación',
+          createdAt: new Date().toISOString(),
+          status: 'posted',
+        });
+        return {
+          session: updated,
+          refundMessage: `Se reintegraron ${Math.abs(hold.amount)} crédito(s) a tu saldo disponible.`,
+        };
+      } else {
+        // Late cancellation: keep in pending state for the 48h objection / administrative review window
+        db.ledger[holdIdx] = {
+          ...hold,
+          memo: `${hold.memo} (cancelación con <24 h: en ventana de revisión de 48 h)`,
+        };
+        return {
+          session: updated,
+          refundMessage:
+            'Cancelación con menos de 24 h: los créditos permanecen en custodia durante la ventana de revisión de 48 h (sin penalidad automática irreversible).',
+        };
+      }
+    }
+
+    return {
+      session: updated,
+      refundMessage: 'La sesión fue cancelada.',
+    };
   },
 
   async getWallet(): Promise<CreditWallet> {

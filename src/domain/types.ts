@@ -50,6 +50,14 @@ export interface Neighborhood {
 
 export type ProfileStatus = 'pending_eligibility' | 'active' | 'restricted' | 'suspended';
 
+export type DayPeriod = 'morning' | 'afternoon' | 'evening';
+
+/** Recurring weekly availability window in America/Argentina/Buenos_Aires. */
+export interface AvailabilityWindow {
+  weekday: 0 | 1 | 2 | 3 | 4 | 5 | 6; // 0 = Domingo, 1 = Lunes ... 6 = Sábado
+  period: DayPeriod;
+}
+
 export interface Profile {
   id: ID;
   displayName: string;
@@ -59,6 +67,7 @@ export interface Profile {
   memberSince: UtcTimestamp;
   skills: UserSkill[];
   availabilitySummary: string;
+  availabilityWindows?: AvailabilityWindow[];
   ratingAvg: number | null;
   ratingCount: number;
   completedSessions: number;
@@ -83,11 +92,16 @@ export interface ProfileUpdateInput {
   skills: UserSkill[];
 }
 
+export interface AvailabilityUpdateInput {
+  windows: AvailabilityWindow[];
+  customNote?: string;
+}
+
 export type PaymentMode = 'credits' | 'money' | 'mixed';
 
 /**
  * How an instructor wants to be paid for one activity.
- * Invariants (enforced by a DB CHECK constraint later):
+ * Invariants (enforced by a DB CHECK constraint):
  *  - credits → creditAmount > 0, moneyAmountCents undefined
  *  - money   → moneyAmountCents > 0, creditAmount undefined
  *  - mixed   → both > 0
@@ -118,6 +132,20 @@ export interface Activity {
   status: 'draft' | 'published' | 'paused' | 'archived';
 }
 
+export interface ActivityUpsertInput {
+  id?: ID;
+  skillId: ID;
+  title: string;
+  description: string;
+  durationMin: number;
+  format: ActivityFormat;
+  meetingArea: string;
+  requirements: string;
+  availabilitySummary: string;
+  payment: PaymentArrangement;
+  status: 'published' | 'paused';
+}
+
 export type SessionState =
   | 'requested'
   | 'confirmed'
@@ -141,12 +169,23 @@ export interface Session {
   /** Price snapshot copied at booking time; later edits to the activity don't change it. */
   price: PaymentArrangement;
   learnerNote?: string;
+  cancellationReason?: string;
 }
 
 export interface SessionRequestInput {
   activityId: ID;
   startsAt: UtcTimestamp;
   learnerNote?: string;
+}
+
+export interface SessionResponseInput {
+  sessionId: ID;
+  decision: 'confirm' | 'decline';
+}
+
+export interface SessionCancelInput {
+  sessionId: ID;
+  reason: string;
 }
 
 export interface SafetyReportInput {
@@ -205,4 +244,6 @@ export interface ActivityFilters {
   categoryId?: CategoryId;
   paymentMode?: PaymentMode;
   neighborhoodId?: ID;
+  format?: ActivityFormat;
+  onlyReciprocal?: boolean;
 }
