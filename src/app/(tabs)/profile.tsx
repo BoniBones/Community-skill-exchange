@@ -5,6 +5,7 @@ import { ActivityCard, Rating, Stars } from '../../components/activity';
 import { getNeighborhood, skillName } from '../../domain/catalog';
 import { useAuth } from '../../features/auth/authContext';
 import { formatShortDate } from '../../lib/dates';
+import { useI18n } from '../../lib/i18n';
 import { profiles } from '../../mocks/data';
 import {
   useCurrentUserId,
@@ -19,6 +20,7 @@ import { colors, spacing } from '../../ui/theme';
 const profileMap = new Map(profiles.map((p) => [p.id, p]));
 
 export default function ProfileScreen() {
+  const { locale, setLocale, t } = useI18n();
   const { resetToNewOnboarding, signOut } = useAuth();
   const { data: userId } = useCurrentUserId();
   const me = useProfile(userId);
@@ -179,6 +181,23 @@ export default function ProfileScreen() {
           Accedé a tus notificaciones, al panel de moderación y resolución de disputas, al flujo de bienvenida (+18)
           o al diagnóstico técnico de Expo Go y Supabase.
         </Text>
+        <View style={{ gap: spacing.xs, paddingBottom: spacing.xs }}>
+          <Text variant="caption" color={colors.textMuted}>
+            {t('languageLabel')}:
+          </Text>
+          <View style={{ flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap' }}>
+            <Chip
+              label={`🇦🇷 ${t('localeEsAr')}`}
+              selected={locale === 'es-AR'}
+              onPress={() => setLocale('es-AR')}
+            />
+            <Chip
+              label={`🌐 ${t('localeEn')}`}
+              selected={locale === 'en'}
+              onPress={() => setLocale('en')}
+            />
+          </View>
+        </View>
         <Button
           title="Notificaciones de la comunidad"
           variant="secondary"

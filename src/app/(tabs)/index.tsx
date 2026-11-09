@@ -5,6 +5,7 @@ import { ActivityCard } from '../../components/activity';
 import { SessionCard } from '../../components/session';
 import { CATEGORIES, getNeighborhood, skillName } from '../../domain/catalog';
 import { formatCredits } from '../../lib/format';
+import { useI18n } from '../../lib/i18n';
 import {
   useActivities,
   useCurrentUserId,
@@ -19,6 +20,7 @@ import { Avatar, Badge, Button, Card, IconCircle, Ionicons, Text, type IconName 
 import { colors, radius, spacing } from '../../ui/theme';
 
 export default function HomeScreen() {
+  const { t } = useI18n();
   const { data: userId } = useCurrentUserId();
   const me = useProfile(userId);
   const wallet = useWallet(userId);
@@ -72,9 +74,11 @@ export default function HomeScreen() {
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm }}>
         <View style={{ flex: 1, gap: 2 }}>
           <Text variant="caption" color={colors.textMuted}>
-            Comunidad · {neighborhood}
+            {t('communityPrefix')} · {neighborhood}
           </Text>
-          <Text variant="title">Hola, {profile.displayName.split(' ')[0]}</Text>
+          <Text variant="title">
+            {t('homeGreeting')}, {profile.displayName.split(' ')[0]}
+          </Text>
         </View>
         <Pressable
           accessibilityRole="button"
@@ -138,32 +142,25 @@ export default function HomeScreen() {
       {/* Mission card */}
       <Card style={{ backgroundColor: colors.surfaceAlt, gap: spacing.sm }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
-          <Badge label="FILOSOFÍA COMUNITARIA" fg={colors.primary} bg={colors.primarySoft} icon="heart-outline" />
+          <Badge label={t('missionBadge')} fg={colors.primary} bg={colors.primarySoft} icon="heart-outline" />
         </View>
-        <Text variant="bodyStrong">Todos tenemos algo para enseñar y algo para aprender.</Text>
+        <Text variant="bodyStrong">{t('communityTagline')}</Text>
         <Text variant="caption" color={colors.textMuted}>
-          Enseñá una hora para sumar un crédito comunitario, o combiná créditos y dinero según lo que defina cada
-          instructor.
+          {t('communityMission')}
         </Text>
       </Card>
 
       {/* Next session */}
       {nextSession ? (
         <View style={{ gap: spacing.sm }}>
-          <SectionHeader
-            title="Tu próxima sesión"
-            subtitle="Recordá verificar asistencia con código QR al empezar y terminar"
-          />
+          <SectionHeader title={t('nextSessionTitle')} subtitle={t('nextSessionSubtitle')} />
           <SessionCard session={nextSession} activity={nextActivity} viewerId={profile.id} />
         </View>
       ) : null}
 
       {/* Reciprocal matches */}
       <View style={{ gap: spacing.md }}>
-        <SectionHeader
-          title="Coincidencias recíprocas"
-          subtitle="Vecinos que enseñan lo que buscás y quieren aprender lo que vos ofrecés"
-        />
+        <SectionHeader title={t('reciprocalTitle')} subtitle={t('reciprocalSubtitle')} />
         {reciprocalMatches.map((rec) => (
           <ActivityCard
             key={rec.activity.id}
@@ -181,7 +178,7 @@ export default function HomeScreen() {
 
       {/* Categories */}
       <View style={{ gap: spacing.md }}>
-        <SectionHeader title="Explorar por categoría" subtitle="Tocá una categoría para filtrar actividades" />
+        <SectionHeader title={t('categoriesTitle')} subtitle={t('categoriesSubtitle')} />
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
           {CATEGORIES.map((c) => (
             <Pressable
@@ -214,9 +211,9 @@ export default function HomeScreen() {
       {/* Recommended for you */}
       <View style={{ gap: spacing.md }}>
         <SectionHeader
-          title="Recomendadas para vos"
-          subtitle="Según tus intereses, cercanía y participación en la comunidad"
-          action={<Button title="Ver todas" variant="ghost" onPress={() => router.push('/(tabs)/explore')} />}
+          title={t('recommendedTitle')}
+          subtitle={t('recommendedSubtitle')}
+          action={<Button title={t('seeAll')} variant="ghost" onPress={() => router.push('/(tabs)/explore')} />}
         />
         {otherRecs.map((rec) => (
           <ActivityCard

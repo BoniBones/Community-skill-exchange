@@ -37,6 +37,7 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "typecheck": "expo customize tsconfig.json && tsc --noEmit",
+    "test": "node --experimental-strip-types --import ./tests/ts-loader.mjs --test tests/economy_and_trust.test.mjs",
     "doctor": "expo-doctor"
   },
   "private": true

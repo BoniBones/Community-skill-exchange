@@ -4,13 +4,16 @@ import { Platform, View } from 'react-native';
 
 import { config } from '../lib/config';
 import { formatSessionDate } from '../lib/dates';
+import { getDeviceLocaleCode, useI18n } from '../lib/i18n';
+import { runPilotReadinessAudit } from '../lib/pilotAudit';
 import { useCurrentUserId, useLedgerIntegrity } from '../services/queries';
 import { checkBackendHealth } from '../services/supabase';
 import { InfoRow, Screen } from '../ui/layout';
-import { Badge, Button, Card, Text } from '../ui/primitives';
+import { Badge, Button, Card, Chip, Text } from '../ui/primitives';
 import { colors, spacing } from '../ui/theme';
 
 export default function DevDiagnosticsScreen() {
+  const { locale, setLocale } = useI18n();
   const { data: userId } = useCurrentUserId();
   const integrity = useLedgerIntegrity(userId);
   const healthQuery = useQuery({
@@ -20,13 +23,69 @@ export default function DevDiagnosticsScreen() {
 
   const health = healthQuery.data;
   const nowIso = new Date().toISOString();
+  const invTotal = integrity.data?.invariants.length ?? 5;
+  const invPassed = integrity.data?.invariants.filter((i) => i.passed).length ?? 5;
+  const pilotAudit = runPilotReadinessAudit({
+    ledgerHealthy: integrity.data?.healthy ?? true,
+    invariantCount: invTotal,
+    passedInvariants: invPassed,
+  });
 
   return (
     <Screen edges={['bottom']}>
-      <Text variant="title">Diagnóstico del entorno</Text>
+      <Text variant="title">Diagnóstico y Auditoría Piloto (Etapa 6)</Text>
       <Text variant="caption" color={colors.textMuted}>
-        Verificación en vivo de compatibilidad con Expo Go, zona horaria, conexión al backend e invariantes contables.
+        Verificación en vivo de compatibilidad con Expo Go, auditoría de lanzamiento piloto, zona horaria, idioma,
+        conexión al backend e invariantes contables.
       </Text>
+
+      <Card style={{ gap: spacing.md }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Text variant="heading">Auditoría de Lanzamiento Piloto</Text>
+          <Badge
+            label={
+              pilotAudit.readyForPilot
+                ? `LISTO (${pilotAudit.passedCount}/${pilotAudit.totalCount})`
+                : 'REVISAR PENDIENTES'
+            }
+            fg={pilotAudit.readyForPilot ? colors.money : colors.warning}
+            bg={pilotAudit.readyForPilot ? colors.moneySoft : colors.warningSoft}
+            icon="rocket-outline"
+          />
+        </View>
+        {pilotAudit.checks.map((c) => (
+          <InfoRow
+            key={c.id}
+            icon={c.passed ? 'checkmark-circle-outline' : 'alert-circle-outline'}
+            label={c.title}
+            value={c.detail}
+          />
+        ))}
+      </Card>
+
+      <Card style={{ gap: spacing.md }}>
+        <Text variant="heading">Idioma y Zona Horaria</Text>
+        <InfoRow icon="globe-outline" label="Zona horaria oficial" value={config.timeZone} />
+        <InfoRow icon="time-outline" label="Timestamp UTC actual" value={nowIso} />
+        <InfoRow
+          icon="calendar-outline"
+          label="Conversión a Buenos Aires"
+          value={formatSessionDate(nowIso)}
+        />
+        <InfoRow icon="language-outline" label="Locale detectado del dispositivo" value={getDeviceLocaleCode()} />
+        <View style={{ flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap' }}>
+          <Chip
+            label="🇦🇷 Español (Argentina)"
+            selected={locale === 'es-AR'}
+            onPress={() => setLocale('es-AR')}
+          />
+          <Chip
+            label="🌐 English"
+            selected={locale === 'en'}
+            onPress={() => setLocale('en')}
+          />
+        </View>
+      </Card>
 
       <Card style={{ gap: spacing.md }}>
         <Text variant="heading">Runtime y Expo Go</Text>
@@ -42,17 +101,6 @@ export default function DevDiagnosticsScreen() {
           value={String(Constants.executionEnvironment ?? 'Expo Go')}
         />
         <InfoRow icon="flask-outline" label="Modo de datos activo" value={config.dataMode.toUpperCase()} />
-      </Card>
-
-      <Card style={{ gap: spacing.md }}>
-        <Text variant="heading">Zona horaria y formato</Text>
-        <InfoRow icon="globe-outline" label="Zona horaria oficial" value={config.timeZone} />
-        <InfoRow icon="time-outline" label="Timestamp UTC actual" value={nowIso} />
-        <InfoRow
-          icon="calendar-outline"
-          label="Conversión a Buenos Aires"
-          value={formatSessionDate(nowIso)}
-        />
       </Card>
 
       {integrity.data ? (

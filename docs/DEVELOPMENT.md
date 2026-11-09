@@ -122,4 +122,20 @@ npm run typecheck
 
 # Ejecutar linter
 npm run lint
+
+# Ejecutar suite automatizada de pruebas (dominio, libro mayor por partida doble, QR 2 etapas y seguridad)
+npm test
 ```
+
+---
+
+## 8. Migraciones SQL y Semilla de Supabase
+
+Los esquemas versionados se encuentran en `supabase/migrations/` y deben aplicarse en orden en el SQL Editor de Supabase (o con `npx supabase db push`):
+
+1. `supabase/migrations/20261108000001_core_schema.sql` — Tablas principales (`profiles`, `private_profiles`, `skills`, `user_skills`, `activities`, `payment_arrangements`, `sessions`, `credit_accounts`, `credit_transactions`, `monetary_payments`).
+2. `supabase/migrations/20261108000002_rls_and_rpcs.sql` — Políticas Row-Level Security (RLS) y RPCs transaccionales (`ledger_transfer`, `grant_initial_incentive`, `request_session`, `respond_to_session`, `cancel_session`).
+3. `supabase/migrations/20261108000003_exchange_economy.sql` — Separación contable de pagos en ARS (`report_monetary_payment`, `confirm_monetary_payment`), ventana de 48 h con descargo por fuerza mayor (`submit_cancellation_objection`) y auditoría de invariantes (`verify_wallet_invariants`).
+4. `supabase/migrations/20261108000004_trust_and_community.sql` — Verificación QR en 2 etapas con nonces efímeros de 90 s (`issue_session_token`, `redeem_session_token`), reseñas verificadas (`submit_verified_review`), notificaciones y moderación de disputas (`resolve_dispute`).
+5. `supabase/seed.sql` — Datos iniciales de barrios (`Santo Tomás`, `Pilar Centro`, `Presidente Derqui`), categorías, catálogo de habilidades y cuentas del sistema (`system_mint`, `escrow`).
+
