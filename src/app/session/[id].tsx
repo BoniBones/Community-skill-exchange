@@ -1,10 +1,14 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { TextInput, View } from 'react-native';
+import { Pressable, TextInput, View } from 'react-native';
 
-import { PaymentPill } from '../../components/activity';
+import { PaymentPill, Stars } from '../../components/activity';
 import { SessionStateBadge } from '../../components/session';
-import type { MonetaryPaymentMethod } from '../../domain/types';
+import type {
+  MonetaryPaymentMethod,
+  SessionVerificationToken,
+  VerificationPhase,
+} from '../../domain/types';
 import { formatSessionDate, formatShortDate, formatTime } from '../../lib/dates';
 import { formatCredits, formatMoneyCents } from '../../lib/format';
 import {
@@ -12,16 +16,79 @@ import {
   useCancelSession,
   useConfirmMonetaryPayment,
   useCurrentUserId,
+  useIssueSessionToken,
   useProfile,
+  useRedeemSessionToken,
   useReportMonetaryPayment,
   useRespondToSession,
   useSession,
   useSessionMonetaryPayment,
+  useSessionReviews,
   useSubmitCancellationObjection,
+  useSubmitReview,
 } from '../../services/queries';
 import { DemoBanner, ErrorState, InfoRow, LoadingState, Screen } from '../../ui/layout';
 import { Avatar, Badge, Button, Card, Chip, Ionicons, Text } from '../../ui/primitives';
 import { colors, radius, spacing } from '../../ui/theme';
+
+/**
+ * Pure React Native 9x9 visual QR matrix rendered from the token hash.
+ * 100% Expo Go compatible with zero native camera/SVG dependencies required.
+ */
+function VisualQrMatrix({ hash }: { hash: string }) {
+  const size = 9;
+  const cells: boolean[][] = [];
+  for (let r = 0; r < size; r++) {
+    const row: boolean[] = [];
+    for (let c = 0; c < size; c++) {
+      // Corner finder patterns (top-left, top-right, bottom-left 3x3)
+      const inTL = r < 3 && c < 3;
+      const inTR = r < 3 && c >= size - 3;
+      const inBL = r >= size - 3 && c < 3;
+      if (inTL || inTR || inBL) {
+        const localR = r < 3 ? r : r - (size - 3);
+        const localC = c < 3 ? c : c - (size - 3);
+        const isBorder = localR === 0 || localR === 2 || localC === 0 || localC === 2;
+        const isCenter = localR === 1 && localC === 1;
+        row.push(isBorder || isCenter);
+      } else {
+        const idx = (r * size + c) % Math.max(1, hash.length);
+        const code = hash.charCodeAt(idx);
+        row.push(code % 2 === 0);
+      }
+    }
+    cells.push(row);
+  }
+
+  return (
+    <View
+      style={{
+        padding: 10,
+        backgroundColor: '#FFFFFF',
+        borderRadius: radius.md,
+        borderWidth: 2,
+        borderColor: colors.text,
+        gap: 3,
+      }}
+    >
+      {cells.map((row, rIdx) => (
+        <View key={rIdx} style={{ flexDirection: 'row', gap: 3 }}>
+          {row.map((filled, cIdx) => (
+            <View
+              key={cIdx}
+              style={{
+                width: 12,
+                height: 12,
+                borderRadius: 2,
+                backgroundColor: filled ? colors.text : '#F3EEE6',
+              }}
+            />
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+}
 
 export default function SessionDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -29,12 +96,16 @@ export default function SessionDetailScreen() {
   const session = useSession(id);
   const activity = useActivity(session.data?.activityId);
   const monetaryPayment = useSessionMonetaryPayment(id);
+  const sessionReviews = useSessionReviews(id);
 
   const respondToSession = useRespondToSession(viewerId);
   const cancelSession = useCancelSession(viewerId);
   const submitObjection = useSubmitCancellationObjection(viewerId);
   const reportPayment = useReportMonetaryPayment(viewerId);
   const confirmPayment = useConfirmMonetaryPayment(viewerId);
+  const issueToken = useIssueSessionToken(viewerId);
+  const redeemToken = useRedeemSessionToken(viewerId);
+  const submitReview = useSubmitReview(viewerId);
 
   const counterpartId =
     session.data && viewerId
@@ -44,7 +115,9 @@ export default function SessionDetailScreen() {
       : undefined;
   const counterpart = useProfile(counterpartId);
 
-  const [showQrPreview, setShowQrPreview] = useState(false);
+  const [activeToken, setActiveToken] = useState<SessionVerificationToken | null>(null);
+  const [manualCode, setManualCode] = useState('');
+
   const [showCancelBox, setShowCancelBox] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [simulateLate, setSimulateLate] = useState(false);
@@ -52,6 +125,10 @@ export default function SessionDetailScreen() {
   const [objectionText, setObjectionText] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<MonetaryPaymentMethod>('mercadopago');
   const [paymentRef, setPaymentRef] = useState('');
+
+  const [reviewRating, setReviewRating] = useState<1 | 2 | 3 | 4 | 5>(5);
+  const [reviewComment, setReviewComment] = useState('');
+
   const [actionBanner, setActionBanner] = useState<string | null>(null);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
 
@@ -83,9 +160,15 @@ export default function SessionDetailScreen() {
   const inLateReviewWindow =
     s.cancellationTiming === 'late_review_window' || s.state === 'disputed';
 
+  const currentPhase: VerificationPhase | null =
+    s.state === 'confirmed' ? 'check_in' : s.state === 'in_progress' ? 'check_out' : null;
+
+  const myExistingReview = (sessionReviews.data ?? []).find((r) => r.authorId === viewerId);
+
   const creditEscrowLabel = (() => {
-    if (s.state === 'completed') return 'LIBERADO AL INSTRUCTOR';
+    if (s.state === 'completed') return 'LIBERADO AL INSTRUCTOR (VERIFICADO CON QR EN 2 ETAPAS)';
     if (s.state === 'declined') return 'REINTEGRADO AL APRENDIZ (SOLICITUD RECHAZADA)';
+    if (s.state === 'resolved') return 'RESUELTO POR MODERACIÓN COMUNITARIA';
     if (s.state === 'disputed') return 'PROTEGIDO EN CUSTODIA · EN REVISIÓN ADMINISTRATIVA';
     if (s.state === 'cancelled') {
       return s.cancellationTiming === 'late_review_window'
@@ -106,6 +189,49 @@ export default function SessionDetailScreen() {
       );
     } catch (err) {
       setErrorBanner(err instanceof Error ? err.message : 'No se pudo procesar la respuesta.');
+    }
+  };
+
+  const handleIssueQr = async (phase: VerificationPhase) => {
+    setErrorBanner(null);
+    try {
+      const tok = await issueToken.mutateAsync({ sessionId: s.id, phase });
+      setActiveToken(tok);
+      setManualCode(tok.code);
+    } catch (err) {
+      setErrorBanner(err instanceof Error ? err.message : 'No se pudo emitir el código QR.');
+    }
+  };
+
+  const handleRedeemQr = async (phase: VerificationPhase, codeToUse?: string) => {
+    setErrorBanner(null);
+    try {
+      const code = (codeToUse ?? manualCode).trim();
+      const res = await redeemToken.mutateAsync({
+        sessionId: s.id,
+        phase,
+        code: code || activeToken?.code || 'DEMO90',
+      });
+      setActiveToken(null);
+      setManualCode('');
+      setActionBanner(res.message);
+    } catch (err) {
+      setErrorBanner(err instanceof Error ? err.message : 'No se pudo validar el código QR.');
+    }
+  };
+
+  const handleSubmitReview = async () => {
+    setErrorBanner(null);
+    try {
+      await submitReview.mutateAsync({
+        sessionId: s.id,
+        rating: reviewRating,
+        comment: reviewComment,
+      });
+      setReviewComment('');
+      setActionBanner('¡Gracias! Tu reseña verificada fue publicada y sumó a la reputación comunitaria.');
+    } catch (err) {
+      setErrorBanner(err instanceof Error ? err.message : 'No se pudo publicar la reseña.');
     }
   };
 
@@ -250,7 +376,7 @@ export default function SessionDetailScreen() {
             </View>
             <Text variant="bodyStrong">{creditEscrowLabel}</Text>
             <Text variant="caption" color={colors.textMuted}>
-              Clave idempotente: hold:{s.id}
+              Clave idempotente: {s.state === 'completed' ? `release:${s.id}` : `hold:${s.id}`}
             </Text>
           </View>
         ) : null}
@@ -416,44 +542,267 @@ export default function SessionDetailScreen() {
         </Card>
       ) : null}
 
-      {/* Two-stage QR verification section */}
+      {/* Stage 5: Interactive Two-Stage Dynamic QR Verification (90s SHA-256 nonces) */}
       <Card style={{ gap: spacing.md, borderColor: colors.primary }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
-          <Ionicons name="qr-code-outline" size={22} color={colors.primary} />
-          <Text variant="heading">Verificación de asistencia en 2 etapas</Text>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+            <Ionicons name="qr-code-outline" size={22} color={colors.primary} />
+            <Text variant="heading">Verificación QR en 2 etapas</Text>
+          </View>
+          <Badge
+            label={
+              s.state === 'completed'
+                ? '2/2 VERIFICADA'
+                : s.state === 'in_progress'
+                  ? 'ETAPA 2: CIERRE'
+                  : 'ETAPA 1: INICIO'
+            }
+            fg={s.state === 'completed' ? colors.money : colors.primary}
+            bg={s.state === 'completed' ? colors.moneySoft : colors.primarySoft}
+            icon="shield-checkmark-outline"
+          />
         </View>
-        <Text variant="caption" color={colors.textMuted}>
-          1) Al comenzar, ambos confirman presencia con un código QR dinámico (expira en 90 segundos).{'\n'}
-          2) Al finalizar la actividad, ambos realizan la verificación de cierre y el backend libera los créditos en
-          custodia de forma atómica.
-        </Text>
 
-        {showQrPreview ? (
+        {/* Step indicators */}
+        <View style={{ gap: spacing.xs }}>
           <View
             style={{
-              backgroundColor: colors.surfaceAlt,
-              borderRadius: radius.md,
-              padding: spacing.lg,
+              flexDirection: 'row',
               alignItems: 'center',
               gap: spacing.sm,
+              backgroundColor: colors.surfaceAlt,
+              padding: spacing.sm,
+              borderRadius: radius.sm,
             }}
           >
-            <Badge label="VISTA PREVIA · ETAPA 5" fg={colors.warning} bg={colors.warningSoft} icon="flask-outline" />
-            <Ionicons name="qr-code" size={96} color={colors.text} />
-            <Text variant="caption" color={colors.textMuted} align="center">
-              En la Etapa 5 este código se emite desde la función segura «issue_session_token» con vigencia de 90 s y
-              hash único para evitar reutilización.
-            </Text>
+            <Ionicons
+              name={s.checkedInAt || s.state === 'completed' ? 'checkmark-circle' : 'ellipse-outline'}
+              size={18}
+              color={s.checkedInAt || s.state === 'completed' ? colors.money : colors.textMuted}
+            />
+            <View style={{ flex: 1 }}>
+              <Text variant="bodyStrong">Etapa 1: Check-in de inicio</Text>
+              <Text variant="caption" color={colors.textMuted}>
+                {s.checkedInAt
+                  ? `Verificado a las ${formatTime(s.checkedInAt)}`
+                  : s.state === 'completed'
+                    ? 'Asistencia de inicio verificada'
+                    : 'Confirma que ambos participantes se encontraron'}
+              </Text>
+            </View>
           </View>
-        ) : (
-          <Button
-            title="Ver demostración de verificación QR"
-            variant="secondary"
-            icon="qr-code-outline"
-            onPress={() => setShowQrPreview(true)}
-          />
-        )}
+
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: spacing.sm,
+              backgroundColor: colors.surfaceAlt,
+              padding: spacing.sm,
+              borderRadius: radius.sm,
+            }}
+          >
+            <Ionicons
+              name={s.checkedOutAt || s.state === 'completed' ? 'checkmark-circle' : 'ellipse-outline'}
+              size={18}
+              color={s.checkedOutAt || s.state === 'completed' ? colors.money : colors.textMuted}
+            />
+            <View style={{ flex: 1 }}>
+              <Text variant="bodyStrong">Etapa 2: Check-out de cierre y liberación atómica</Text>
+              <Text variant="caption" color={colors.textMuted}>
+                {s.checkedOutAt
+                  ? `Verificado a las ${formatTime(s.checkedOutAt)} · Custodia liberada`
+                  : s.state === 'completed'
+                    ? 'Cierre verificado · Créditos transferidos al instructor'
+                    : 'Al finalizar, libera los créditos en custodia al instructor'}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Interactive QR generator & validator for confirmed or in_progress sessions */}
+        {currentPhase ? (
+          <View style={{ gap: spacing.md }}>
+            {activeToken && activeToken.phase === currentPhase ? (
+              <View
+                style={{
+                  backgroundColor: colors.surfaceAlt,
+                  borderRadius: radius.md,
+                  padding: spacing.md,
+                  alignItems: 'center',
+                  gap: spacing.sm,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                }}
+              >
+                <Badge
+                  label={`TOKEN DINÁMICO DE 90 S · ${currentPhase === 'check_in' ? 'CHECK-IN' : 'CHECK-OUT'}`}
+                  fg={colors.primary}
+                  bg={colors.primarySoft}
+                  icon="time-outline"
+                />
+                <VisualQrMatrix hash={activeToken.tokenHash} />
+                <Text variant="display" style={{ letterSpacing: 4 }}>
+                  {activeToken.code}
+                </Text>
+                <Text variant="caption" color={colors.textMuted} align="center">
+                  Hash SHA-256: {activeToken.tokenHash.slice(0, 20)}…{'\n'}
+                  Expira a las {formatTime(activeToken.expiresAt)} (uso único)
+                </Text>
+                <Button
+                  title={
+                    currentPhase === 'check_in'
+                      ? 'Simular escaneo de inicio (Etapa 1/2)'
+                      : 'Simular escaneo de cierre y liberar créditos (Etapa 2/2)'
+                  }
+                  icon="checkmark-done-circle-outline"
+                  loading={redeemToken.isPending}
+                  fullWidth
+                  onPress={() => handleRedeemQr(currentPhase, activeToken.code)}
+                />
+              </View>
+            ) : (
+              <Button
+                title={
+                  currentPhase === 'check_in'
+                    ? 'Emitir código QR de inicio (90 s)'
+                    : 'Emitir código QR de cierre (90 s)'
+                }
+                icon="qr-code-outline"
+                loading={issueToken.isPending}
+                onPress={() => handleIssueQr(currentPhase)}
+              />
+            )}
+
+            {/* Manual 6-char code redemption */}
+            <View style={{ gap: spacing.xs }}>
+              <Text variant="caption" color={colors.textMuted}>
+                ¿Tu contraparte emitió el QR en su celular? Ingresá su código de 6 caracteres:
+              </Text>
+              <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+                <TextInput
+                  value={manualCode}
+                  onChangeText={setManualCode}
+                  autoCapitalize="characters"
+                  maxLength={8}
+                  placeholder="Ej. K9T4M2"
+                  placeholderTextColor={colors.textMuted}
+                  style={{
+                    flex: 1,
+                    backgroundColor: colors.surface,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    borderRadius: radius.md,
+                    paddingHorizontal: spacing.md,
+                    minHeight: 44,
+                    fontSize: 15,
+                    fontWeight: '700',
+                    color: colors.text,
+                  }}
+                />
+                <Button
+                  title="Validar"
+                  variant="secondary"
+                  loading={redeemToken.isPending}
+                  onPress={() => handleRedeemQr(currentPhase)}
+                />
+              </View>
+            </View>
+          </View>
+        ) : s.state === 'requested' ? (
+          <Text variant="caption" color={colors.textMuted}>
+            La verificación QR se habilita automáticamente una vez que el instructor confirma la solicitud.
+          </Text>
+        ) : null}
       </Card>
+
+      {/* Stage 5: Verified Post-Session Review Card */}
+      {s.state === 'completed' ? (
+        <Card style={{ gap: spacing.md, borderColor: colors.accent }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text variant="heading">Reseña verificada del encuentro</Text>
+            <Badge
+              label={myExistingReview ? 'PUBLICADA' : 'HABILITADA'}
+              fg={colors.accent}
+              bg={colors.accentSoft}
+              icon="star-outline"
+            />
+          </View>
+
+          {myExistingReview ? (
+            <View
+              style={{
+                backgroundColor: colors.surfaceAlt,
+                borderRadius: radius.md,
+                padding: spacing.md,
+                gap: spacing.xs,
+              }}
+            >
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text variant="bodyStrong">Tu calificación para {counterpart.data?.displayName ?? 'tu vecino'}</Text>
+                <Stars value={myExistingReview.rating} />
+              </View>
+              <Text color={colors.text}>{myExistingReview.comment}</Text>
+              <Text variant="caption" color={colors.textMuted}>
+                Publicada el {formatShortDate(myExistingReview.createdAt)} · Reseña respaldada por asistencia QR
+              </Text>
+            </View>
+          ) : (
+            <View style={{ gap: spacing.sm }}>
+              <Text variant="caption" color={colors.textMuted}>
+                Solo quienes completaron ambas etapas de verificación QR pueden calificar. ¿Cómo fue tu experiencia con{' '}
+                {counterpart.data?.displayName ?? 'tu contraparte'}?
+              </Text>
+              <View style={{ flexDirection: 'row', gap: spacing.sm, alignItems: 'center' }}>
+                {([1, 2, 3, 4, 5] as const).map((star) => (
+                  <Pressable
+                    key={star}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${star} estrellas`}
+                    onPress={() => setReviewRating(star)}
+                    style={{
+                      paddingVertical: 6,
+                      paddingHorizontal: 10,
+                      borderRadius: radius.pill,
+                      borderWidth: 1,
+                      borderColor: reviewRating >= star ? colors.credit : colors.border,
+                      backgroundColor: reviewRating >= star ? colors.creditSoft : colors.surface,
+                    }}
+                  >
+                    <Text variant="bodyStrong" color={reviewRating >= star ? colors.credit : colors.textMuted}>
+                      {star} ★
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+              <TextInput
+                value={reviewComment}
+                onChangeText={setReviewComment}
+                placeholder="Contá qué aprendiste o cómo resultó el intercambio…"
+                placeholderTextColor={colors.textMuted}
+                multiline
+                style={{
+                  backgroundColor: colors.surface,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  borderRadius: radius.md,
+                  padding: spacing.md,
+                  minHeight: 72,
+                  fontSize: 14,
+                  color: colors.text,
+                  textAlignVertical: 'top',
+                }}
+              />
+              <Button
+                title="Publicar reseña verificada"
+                icon="star-outline"
+                loading={submitReview.isPending}
+                onPress={handleSubmitReview}
+              />
+            </View>
+          )}
+        </Card>
+      ) : null}
 
       {/* Stage 4: 48-Hour Late-Cancellation Review Window & Force-Majeure Objection */}
       {inLateReviewWindow ? (
@@ -480,7 +829,7 @@ export default function SessionDetailScreen() {
                 backgroundColor: colors.surface,
                 borderRadius: radius.sm,
                 padding: spacing.md,
-                gap: 4,
+                gap: 6,
               }}
             >
               <Badge
@@ -496,6 +845,12 @@ export default function SessionDetailScreen() {
                   resolución.
                 </Text>
               ) : null}
+              <Button
+                title="Ver en panel de moderación comunitaria"
+                variant="secondary"
+                icon="shield-outline"
+                onPress={() => router.push('/admin')}
+              />
             </View>
           ) : (
             <View style={{ gap: spacing.sm }}>

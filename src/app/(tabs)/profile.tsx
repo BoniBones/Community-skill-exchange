@@ -172,13 +172,27 @@ export default function ProfileScreen() {
         })}
       </View>
 
-      {/* Onboarding & Diagnostics shortcuts */}
+      {/* Onboarding, Trust & Diagnostics shortcuts */}
       <Card style={{ backgroundColor: colors.surfaceAlt, gap: spacing.sm }}>
-        <Text variant="bodyStrong">Cuenta, Onboarding y Diagnóstico</Text>
+        <Text variant="bodyStrong">Comunidad, Moderación y Diagnóstico</Text>
         <Text variant="caption" color={colors.textMuted}>
-          Podés probar el flujo completo de bienvenida, verificación +18 y selección de habilidades o abrir el
-          diagnóstico técnico de Expo Go y Supabase.
+          Accedé a tus notificaciones, al panel de moderación y resolución de disputas, al flujo de bienvenida (+18)
+          o al diagnóstico técnico de Expo Go y Supabase.
         </Text>
+        <Button
+          title="Notificaciones de la comunidad"
+          variant="secondary"
+          icon="notifications-outline"
+          fullWidth
+          onPress={() => router.push('/notifications')}
+        />
+        <Button
+          title="Panel de Moderación y Disputas"
+          variant="secondary"
+          icon="shield-checkmark-outline"
+          fullWidth
+          onPress={() => router.push('/admin')}
+        />
         <Button
           title="Probar flujo de Onboarding (3 pasos)"
           variant="secondary"

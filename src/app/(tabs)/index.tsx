@@ -8,6 +8,7 @@ import { formatCredits } from '../../lib/format';
 import {
   useActivities,
   useCurrentUserId,
+  useNotifications,
   useProfile,
   useRecommendations,
   useSessions,
@@ -23,6 +24,7 @@ export default function HomeScreen() {
   const wallet = useWallet(userId);
   const recs = useRecommendations(userId);
   const sessions = useSessions(userId);
+  const notifications = useNotifications(userId);
   const allActivities = useActivities({});
 
   if (me.isLoading || recs.isLoading) {
@@ -43,6 +45,7 @@ export default function HomeScreen() {
 
   const profile = me.data;
   const neighborhood = getNeighborhood(profile.neighborhoodId)?.name ?? 'Tu barrio';
+  const unreadNotifications = (notifications.data ?? []).filter((n) => !n.readAt).length;
   const upcoming = (sessions.data ?? []).filter(
     (s) => s.state === 'confirmed' || s.state === 'requested' || s.state === 'in_progress',
   );
@@ -60,12 +63,13 @@ export default function HomeScreen() {
         wallet.refetch();
         recs.refetch();
         sessions.refetch();
+        notifications.refetch();
       }}
     >
       <DemoBanner />
 
       {/* Header */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm }}>
         <View style={{ flex: 1, gap: 2 }}>
           <Text variant="caption" color={colors.textMuted}>
             Comunidad · {neighborhood}
@@ -90,6 +94,41 @@ export default function HomeScreen() {
           <Text variant="bodyStrong" color={colors.credit}>
             {formatCredits(wallet.data?.available ?? 0)}
           </Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Ver notificaciones de la comunidad"
+          onPress={() => router.push('/notifications')}
+          style={{
+            position: 'relative',
+            backgroundColor: colors.surface,
+            borderWidth: 1,
+            borderColor: colors.border,
+            borderRadius: radius.pill,
+            padding: 9,
+          }}
+        >
+          <Ionicons name="notifications-outline" size={20} color={colors.text} />
+          {unreadNotifications > 0 ? (
+            <View
+              style={{
+                position: 'absolute',
+                top: -4,
+                right: -4,
+                backgroundColor: colors.accent,
+                borderRadius: radius.pill,
+                minWidth: 18,
+                height: 18,
+                alignItems: 'center',
+                justifyContent: 'center',
+                paddingHorizontal: 4,
+              }}
+            >
+              <Text variant="caption" color="#FFFFFF" style={{ fontSize: 10, fontWeight: '700' }}>
+                {unreadNotifications}
+              </Text>
+            </View>
+          ) : null}
         </Pressable>
         <Pressable accessibilityRole="button" onPress={() => router.push('/(tabs)/profile')}>
           <Avatar name={profile.displayName} size={42} />

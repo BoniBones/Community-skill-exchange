@@ -12,6 +12,7 @@ import type {
   AvailabilityWindow,
   CreditWallet,
   DayPeriod,
+  DisputeRecord,
   ID,
   LedgerIntegrityReport,
   LedgerInvariantCheck,
@@ -19,7 +20,10 @@ import type {
   MonetaryPayment,
   PaymentArrangement,
   ProfileStatus,
+  Review,
+  SafetyReportRecord,
   Session,
+  SessionVerificationToken,
 } from '../domain/types';
 import * as db from '../mocks/data';
 import type { Repository } from './repository';
@@ -30,8 +34,30 @@ const MAX_BALANCE = 20;
 const MIN_PILOT_AGE = 18;
 const CANCELLATION_DEADLINE_HOURS = 24;
 const OBJECTION_WINDOW_HOURS = 48;
+const QR_TOKEN_TTL_SECONDS = 90;
 
 const blockedByUser = new Map<ID, Set<ID>>();
+
+function pseudoSha256Hex(raw: string): string {
+  let h1 = 0xdeadbeef ^ raw.length;
+  let h2 = 0x41c6ce57 ^ raw.length;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  const part = (n: number) => (n >>> 0).toString(16).padStart(8, '0');
+  return `${part(h1)}${part(h2)}${part(h1 ^ h2)}${part(~h1)}${part(~h2)}${part(h1 + h2)}${part(h1 * 3)}${part(h2 * 7)}`;
+}
+
+function generateVerificationCode(): string {
+  const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+  let out = '';
+  for (let i = 0; i < 6; i++) {
+    out += alphabet[Math.floor(Math.random() * alphabet.length)]!;
+  }
+  return out;
+}
 
 function getBlockedSet(userId: ID): Set<ID> {
   let set = blockedByUser.get(userId);
@@ -707,7 +733,201 @@ export const mockRepository: Repository = {
       };
     }
 
+    const activity = db.activities.find((a) => a.id === s.activityId);
+    const existingDispute = db.disputes.find((d) => d.sessionId === s.id && d.status === 'open');
+    if (!existingDispute) {
+      db.disputes.unshift({
+        id: `disp-${Date.now()}`,
+        sessionId: s.id,
+        activityTitle: activity?.title ?? 'Sesión comunitaria',
+        openedBy: userId,
+        learnerId: s.learnerId,
+        instructorId: s.instructorId,
+        creditAmount: s.price.creditAmount ?? 0,
+        reason,
+        status: 'open',
+        createdAt: nowIso,
+      });
+    }
+
+    db.notifications.unshift({
+      id: `notif-${Date.now()}`,
+      userId: db.CURRENT_USER_ID,
+      type: 'dispute_opened',
+      title: 'Descargo por fuerza mayor en revisión',
+      body: `Tu descargo para «${activity?.title ?? 'Sesión'}» quedó registrado sin penalidad automática.`,
+      sessionId: s.id,
+      actorId: userId,
+      createdAt: nowIso,
+    });
+
     return updated;
+  },
+
+  async issueSessionToken(userId, input) {
+    await delay(150);
+    const s = db.sessions.find((x) => x.id === input.sessionId);
+    if (!s) throw new Error('Sesión no encontrada.');
+    if (s.learnerId !== userId && s.instructorId !== userId) {
+      throw new Error('Solo los participantes de la sesión pueden emitir un código QR de asistencia.');
+    }
+    if (input.phase === 'check_in' && s.state !== 'confirmed') {
+      throw new Error('El check-in de inicio requiere que la sesión esté en estado «Confirmada».');
+    }
+    if (input.phase === 'check_out' && s.state !== 'in_progress') {
+      throw new Error('El check-out de cierre requiere haber completado primero el check-in («En curso»).');
+    }
+
+    const code = generateVerificationCode();
+    const qrPayload = `cse://verify?session=${s.id}&phase=${input.phase}&code=${code}`;
+    const tokenHash = pseudoSha256Hex(`${s.id}:${input.phase}:${code}`);
+    const expiresAt = new Date(Date.now() + QR_TOKEN_TTL_SECONDS * 1000).toISOString();
+
+    const token: SessionVerificationToken = {
+      id: `tok-${Date.now()}`,
+      sessionId: s.id,
+      phase: input.phase,
+      issuerId: userId,
+      code,
+      tokenHash,
+      qrPayload,
+      expiresAt,
+    };
+    db.verificationTokens.unshift(token);
+    return token;
+  },
+
+  async redeemSessionToken(userId, input) {
+    await delay(200);
+    const idx = db.sessions.findIndex((x) => x.id === input.sessionId);
+    if (idx < 0) throw new Error('Sesión no encontrada.');
+    const s = db.sessions[idx]!;
+    if (s.learnerId !== userId && s.instructorId !== userId) {
+      throw new Error('No sos participante de esta sesión.');
+    }
+
+    const normalizedCode = input.code.trim().toUpperCase();
+    if (normalizedCode.length < 4) {
+      throw new Error('Ingresá el código de 6 caracteres o escaneá el QR de la contraparte.');
+    }
+
+    const tokIdx = db.verificationTokens.findIndex(
+      (t) => t.sessionId === s.id && t.phase === input.phase && t.code === normalizedCode && !t.usedAt,
+    );
+    if (tokIdx >= 0) {
+      const tok = db.verificationTokens[tokIdx]!;
+      if (new Date(tok.expiresAt).getTime() < Date.now()) {
+        throw new Error('El código QR expiró (vigencia máxima: 90 segundos). Emití uno nuevo.');
+      }
+      db.verificationTokens[tokIdx] = {
+        ...tok,
+        usedAt: new Date().toISOString(),
+        usedBy: userId,
+      };
+    }
+
+    const nowIso = new Date().toISOString();
+    const activity = db.activities.find((a) => a.id === s.activityId);
+
+    if (input.phase === 'check_in') {
+      if (s.state !== 'confirmed') {
+        throw new Error('La sesión debe estar «Confirmada» para realizar el check-in.');
+      }
+      const updated: Session = {
+        ...s,
+        state: 'in_progress',
+        checkedInAt: nowIso,
+      };
+      db.sessions[idx] = updated;
+      return {
+        session: updated,
+        releasedCredits: 0,
+        message: 'Check-in de inicio verificado (Etapa 1/2). La sesión ahora está «En curso».',
+      };
+    }
+
+    // Phase 2: check_out -> complete session and atomically release credit escrow
+    if (s.state !== 'in_progress') {
+      throw new Error('Primero deben verificar el check-in de inicio antes del cierre.');
+    }
+
+    const updated: Session = {
+      ...s,
+      state: 'completed',
+      checkedOutAt: nowIso,
+    };
+    db.sessions[idx] = updated;
+
+    const creditAmount = s.price.mode !== 'money' ? (s.price.creditAmount ?? 0) : 0;
+
+    // 1. If viewer is learner, settle their pending 'hold' -> 'posted'
+    const holdIdx = db.ledger.findIndex((e) => e.sessionId === s.id && e.type === 'hold' && e.status === 'pending');
+    if (holdIdx >= 0) {
+      const hold = db.ledger[holdIdx]!;
+      db.ledger[holdIdx] = {
+        ...hold,
+        status: 'posted',
+        memo: `${activity?.title ?? 'Sesión'}: asistencia verificada en 2 etapas (transferido al instructor)`,
+      };
+    }
+
+    // 2. If viewer is instructor, settle or create their 'release' -> 'posted'
+    const relIdx = db.ledger.findIndex((e) => e.sessionId === s.id && e.type === 'release');
+    if (relIdx >= 0) {
+      const rel = db.ledger[relIdx]!;
+      db.ledger[relIdx] = {
+        ...rel,
+        status: 'posted',
+        createdAt: nowIso,
+        memo: `Enseñaste «${activity?.title ?? 'Sesión'}» (verificado con QR en 2 etapas)`,
+      };
+    } else if (s.instructorId === db.CURRENT_USER_ID && creditAmount > 0) {
+      db.ledger.unshift({
+        id: `tx-rel-${Date.now()}`,
+        type: 'release',
+        amount: creditAmount,
+        sessionId: s.id,
+        idempotencyKey: `release:${s.id}`,
+        memo: `Enseñaste «${activity?.title ?? 'Sesión'}» (verificado con QR en 2 etapas)`,
+        createdAt: nowIso,
+        status: 'posted',
+      });
+    }
+
+    // 3. Increment completedSessions and communityContributions for both participants
+    for (const pid of [s.learnerId, s.instructorId]) {
+      const pIdx = db.profiles.findIndex((p) => p.id === pid);
+      if (pIdx >= 0) {
+        const p = db.profiles[pIdx]!;
+        db.profiles[pIdx] = {
+          ...p,
+          completedSessions: p.completedSessions + 1,
+          communityContributions: p.communityContributions + 1,
+        };
+      }
+    }
+
+    db.notifications.unshift({
+      id: `notif-${Date.now()}`,
+      userId: db.CURRENT_USER_ID,
+      type: creditAmount > 0 ? 'credit_released' : 'session_completed',
+      title: 'Sesión completada y verificada',
+      body:
+        creditAmount > 0
+          ? `Se verificó el cierre de «${activity?.title ?? 'Sesión'}» y se liberaron ${creditAmount} crédito(s) de la custodia.`
+          : `Se verificó el cierre de «${activity?.title ?? 'Sesión'}». ¡Ya podés dejar tu reseña verificada!`,
+      sessionId: s.id,
+      createdAt: nowIso,
+    });
+
+    return {
+      session: updated,
+      releasedCredits: creditAmount,
+      message:
+        creditAmount > 0
+          ? `Check-out verificado (Etapa 2/2). ¡Sesión completada! Se liberaron de forma atómica ${creditAmount} crédito(s) al instructor.`
+          : 'Check-out verificado (Etapa 2/2). ¡Sesión completada!',
+    };
   },
 
   async getWallet(): Promise<CreditWallet> {
@@ -774,10 +994,190 @@ export const mockRepository: Repository = {
     return db.reviews.filter((r) => r.subjectId === userId);
   },
 
+  async listReviewsBySession(sessionId) {
+    await delay(100);
+    return db.reviews.filter((r) => r.sessionId === sessionId);
+  },
+
+  async submitReview(userId, input) {
+    await delay(200);
+    const s = db.sessions.find((x) => x.id === input.sessionId);
+    if (!s) throw new Error('Sesión no encontrada.');
+    if (s.learnerId !== userId && s.instructorId !== userId) {
+      throw new Error('Solo los participantes de la sesión pueden dejar una reseña.');
+    }
+    if (s.state !== 'completed') {
+      throw new Error('Solo se pueden reseñar sesiones completadas y verificadas.');
+    }
+    const existing = db.reviews.find((r) => r.sessionId === s.id && r.authorId === userId);
+    if (existing) {
+      throw new Error('Ya publicaste una reseña verificada para esta sesión.');
+    }
+    const comment = input.comment.trim();
+    if (comment.length < 4) {
+      throw new Error('Escribí un breve comentario sobre la experiencia (al menos 4 caracteres).');
+    }
+
+    const subjectId = s.instructorId === userId ? s.learnerId : s.instructorId;
+    const nowIso = new Date().toISOString();
+    const created: Review = {
+      id: `r-${Date.now()}`,
+      sessionId: s.id,
+      authorId: userId,
+      subjectId,
+      rating: input.rating,
+      comment,
+      createdAt: nowIso,
+    };
+    db.reviews.unshift(created);
+
+    // Update recipient profile ratingAvg and ratingCount
+    const pIdx = db.profiles.findIndex((p) => p.id === subjectId);
+    if (pIdx >= 0) {
+      const subjectReviews = db.reviews.filter((r) => r.subjectId === subjectId);
+      const avg =
+        Math.round((subjectReviews.reduce((acc, r) => acc + r.rating, 0) / subjectReviews.length) * 10) / 10;
+      db.profiles[pIdx] = {
+        ...db.profiles[pIdx]!,
+        ratingAvg: avg,
+        ratingCount: subjectReviews.length,
+      };
+    }
+
+    return created;
+  },
+
+  async listNotifications(userId) {
+    await delay(100);
+    return db.notifications
+      .filter((n) => n.userId === userId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  },
+
+  async markAllNotificationsRead(userId) {
+    await delay(100);
+    const nowIso = new Date().toISOString();
+    for (let i = 0; i < db.notifications.length; i++) {
+      const n = db.notifications[i]!;
+      if (n.userId === userId && !n.readAt) {
+        db.notifications[i] = { ...n, readAt: nowIso };
+      }
+    }
+  },
+
+  async listDisputes() {
+    await delay(120);
+    return [...db.disputes].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  },
+
+  async resolveDispute(moderatorId, input) {
+    await delay(200);
+    const idx = db.disputes.findIndex((d) => d.id === input.disputeId);
+    if (idx < 0) throw new Error('Disputa no encontrada.');
+    const d = db.disputes[idx]!;
+    if (d.status !== 'open') {
+      throw new Error('Esta disputa ya fue resuelta.');
+    }
+
+    const note = input.resolutionNote.trim() || 'Resuelta por moderación comunitaria';
+    const nowIso = new Date().toISOString();
+    const updatedDispute: DisputeRecord = {
+      ...d,
+      status: input.resolution,
+      resolutionNote: note,
+      resolvedBy: moderatorId,
+      resolvedAt: nowIso,
+    };
+    db.disputes[idx] = updatedDispute;
+
+    const sesIdx = db.sessions.findIndex((s) => s.id === d.sessionId);
+    if (sesIdx >= 0) {
+      db.sessions[sesIdx] = {
+        ...db.sessions[sesIdx]!,
+        state: 'resolved',
+      };
+    }
+
+    // Settle any pending hold in the ledger according to the resolution
+    const holdIdx = db.ledger.findIndex(
+      (e) => e.sessionId === d.sessionId && e.type === 'hold' && e.status === 'pending',
+    );
+    if (holdIdx >= 0) {
+      const hold = db.ledger[holdIdx]!;
+      const absAmount = Math.abs(hold.amount);
+      db.ledger[holdIdx] = { ...hold, status: 'posted' };
+
+      if (input.resolution === 'resolved_refund') {
+        db.ledger.unshift({
+          id: `tx-disp-ref-${Date.now()}`,
+          type: 'refund',
+          amount: absAmount,
+          sessionId: d.sessionId,
+          idempotencyKey: `refund:dispute:${d.id}`,
+          memo: `Reintegro 100% por resolución de disputa: ${note}`,
+          createdAt: nowIso,
+          status: 'posted',
+        });
+      } else if (input.resolution === 'resolved_split') {
+        const half = Math.round((absAmount / 2) * 100) / 100;
+        db.ledger.unshift({
+          id: `tx-disp-split-${Date.now()}`,
+          type: 'refund',
+          amount: half,
+          sessionId: d.sessionId,
+          idempotencyKey: `refund:dispute:${d.id}`,
+          memo: `Reintegro parcial (50%) por acuerdo de moderación: ${note}`,
+          createdAt: nowIso,
+          status: 'posted',
+        });
+      }
+    }
+
+    db.notifications.unshift({
+      id: `notif-${Date.now()}`,
+      userId: db.CURRENT_USER_ID,
+      type: 'dispute_resolved',
+      title: 'Revisión administrativa completada',
+      body: `Se resolvió el caso de «${d.activityTitle}»: ${note}`,
+      sessionId: d.sessionId,
+      actorId: moderatorId,
+      createdAt: nowIso,
+    });
+
+    return updatedDispute;
+  },
+
+  async listSafetyReports() {
+    await delay(100);
+    return [...db.reports].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  },
+
+  async resolveSafetyReport(_moderatorId, input) {
+    await delay(150);
+    const idx = db.reports.findIndex((r) => r.id === input.reportId);
+    if (idx < 0) throw new Error('Reporte no encontrado.');
+    const updated: SafetyReportRecord = {
+      ...db.reports[idx]!,
+      status: input.status,
+    };
+    db.reports[idx] = updated;
+    return updated;
+  },
+
   async reportOrBlockUser(userId, input) {
     await delay(200);
     if (input.blockUser) {
       getBlockedSet(userId).add(input.targetUserId);
+    }
+    if (input.reason.trim()) {
+      db.reports.unshift({
+        id: `rep-${Date.now()}`,
+        reporterId: userId,
+        targetUserId: input.targetUserId,
+        reason: input.reason.trim(),
+        status: 'open',
+        createdAt: new Date().toISOString(),
+      });
     }
   },
 

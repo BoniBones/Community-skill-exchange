@@ -10,8 +10,13 @@ import type {
   ConfirmMonetaryPaymentInput,
   EligibilitySubmission,
   ID,
+  IssueSessionTokenInput,
   ProfileUpdateInput,
+  RedeemSessionTokenInput,
   ReportMonetaryPaymentInput,
+  ResolveDisputeInput,
+  ResolveReportInput,
+  ReviewCreateInput,
   SafetyReportInput,
   SessionCancelInput,
   SessionRequestInput,
@@ -38,6 +43,10 @@ export const queryKeys = {
   monetaryPayments: (id: ID) => ['monetary-payments', id] as const,
   sessionMonetaryPayment: (sessionId: ID) => ['session-monetary-payment', sessionId] as const,
   reviewsAbout: (id: ID) => ['reviews', id] as const,
+  sessionReviews: (sessionId: ID) => ['session-reviews', sessionId] as const,
+  notifications: (id: ID) => ['notifications', id] as const,
+  disputes: ['disputes'] as const,
+  safetyReports: ['safety-reports'] as const,
   blockedUsers: (id: ID) => ['blocked-users', id] as const,
 };
 
@@ -134,6 +143,36 @@ export function useReviewsAbout(userId: ID | undefined) {
     queryKey: queryKeys.reviewsAbout(userId ?? ''),
     queryFn: () => repository.listReviewsAbout(userId!),
     enabled: !!userId,
+  });
+}
+
+export function useSessionReviews(sessionId: ID | undefined) {
+  return useQuery({
+    queryKey: queryKeys.sessionReviews(sessionId ?? ''),
+    queryFn: () => repository.listReviewsBySession(sessionId!),
+    enabled: !!sessionId,
+  });
+}
+
+export function useNotifications(userId: ID | undefined) {
+  return useQuery({
+    queryKey: queryKeys.notifications(userId ?? ''),
+    queryFn: () => repository.listNotifications(userId!),
+    enabled: !!userId,
+  });
+}
+
+export function useDisputes() {
+  return useQuery({
+    queryKey: queryKeys.disputes,
+    queryFn: () => repository.listDisputes(),
+  });
+}
+
+export function useSafetyReports() {
+  return useQuery({
+    queryKey: queryKeys.safetyReports,
+    queryFn: () => repository.listSafetyReports(),
   });
 }
 
@@ -261,7 +300,82 @@ export function useSubmitCancellationObjection(userId: ID | undefined) {
         qc.invalidateQueries({ queryKey: queryKeys.sessions(userId) });
         qc.invalidateQueries({ queryKey: queryKeys.wallet(userId) });
         qc.invalidateQueries({ queryKey: queryKeys.ledgerIntegrity(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.disputes });
+        qc.invalidateQueries({ queryKey: queryKeys.notifications(userId) });
       }
+    },
+  });
+}
+
+export function useIssueSessionToken(userId: ID | undefined) {
+  return useMutation({
+    mutationFn: (input: IssueSessionTokenInput) => repository.issueSessionToken(userId!, input),
+  });
+}
+
+export function useRedeemSessionToken(userId: ID | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: RedeemSessionTokenInput) => repository.redeemSessionToken(userId!, input),
+    onSuccess: ({ session }) => {
+      if (userId) {
+        qc.invalidateQueries({ queryKey: queryKeys.session(session.id) });
+        qc.invalidateQueries({ queryKey: queryKeys.sessions(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.wallet(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.ledgerIntegrity(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.profile(session.learnerId) });
+        qc.invalidateQueries({ queryKey: queryKeys.profile(session.instructorId) });
+        qc.invalidateQueries({ queryKey: queryKeys.notifications(userId) });
+      }
+    },
+  });
+}
+
+export function useSubmitReview(userId: ID | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ReviewCreateInput) => repository.submitReview(userId!, input),
+    onSuccess: (review) => {
+      qc.invalidateQueries({ queryKey: queryKeys.sessionReviews(review.sessionId) });
+      qc.invalidateQueries({ queryKey: queryKeys.reviewsAbout(review.subjectId) });
+      qc.invalidateQueries({ queryKey: queryKeys.profile(review.subjectId) });
+    },
+  });
+}
+
+export function useMarkAllNotificationsRead(userId: ID | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => repository.markAllNotificationsRead(userId!),
+    onSuccess: () => {
+      if (userId) qc.invalidateQueries({ queryKey: queryKeys.notifications(userId) });
+    },
+  });
+}
+
+export function useResolveDispute(moderatorId: ID | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ResolveDisputeInput) => repository.resolveDispute(moderatorId!, input),
+    onSuccess: (dispute) => {
+      qc.invalidateQueries({ queryKey: queryKeys.disputes });
+      qc.invalidateQueries({ queryKey: queryKeys.session(dispute.sessionId) });
+      if (moderatorId) {
+        qc.invalidateQueries({ queryKey: queryKeys.sessions(moderatorId) });
+        qc.invalidateQueries({ queryKey: queryKeys.wallet(moderatorId) });
+        qc.invalidateQueries({ queryKey: queryKeys.ledgerIntegrity(moderatorId) });
+        qc.invalidateQueries({ queryKey: queryKeys.notifications(moderatorId) });
+      }
+    },
+  });
+}
+
+export function useResolveSafetyReport(moderatorId: ID | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ResolveReportInput) => repository.resolveSafetyReport(moderatorId!, input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.safetyReports });
     },
   });
 }
@@ -303,6 +417,7 @@ export function useReportOrBlockUser(userId: ID | undefined) {
         qc.invalidateQueries({ queryKey: queryKeys.blockedUsers(userId) });
         qc.invalidateQueries({ queryKey: queryKeys.recommendations(userId) });
         qc.invalidateQueries({ queryKey: ['activities'] });
+        qc.invalidateQueries({ queryKey: queryKeys.safetyReports });
       }
     },
   });

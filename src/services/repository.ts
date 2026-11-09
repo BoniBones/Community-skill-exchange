@@ -7,23 +7,32 @@ import type {
   ActivityFilters,
   ActivityRecommendation,
   ActivityUpsertInput,
+  AppNotification,
   AvailabilityUpdateInput,
   ConfirmMonetaryPaymentInput,
   CreditWallet,
+  DisputeRecord,
   EligibilitySubmission,
   ID,
+  IssueSessionTokenInput,
   LedgerIntegrityReport,
   MonetaryPayment,
   Profile,
   ProfileStatus,
   ProfileUpdateInput,
+  RedeemSessionTokenInput,
   ReportMonetaryPaymentInput,
+  ResolveDisputeInput,
+  ResolveReportInput,
   Review,
+  ReviewCreateInput,
   SafetyReportInput,
+  SafetyReportRecord,
   Session,
   SessionCancelInput,
   SessionRequestInput,
   SessionResponseInput,
+  SessionVerificationToken,
   SubmitCancellationObjectionInput,
 } from '../domain/types';
 
@@ -48,6 +57,11 @@ export interface Repository {
   respondToSession(userId: ID, input: SessionResponseInput): Promise<Session>;
   cancelSession(userId: ID, input: SessionCancelInput): Promise<{ session: Session; refundMessage: string }>;
   submitCancellationObjection(userId: ID, input: SubmitCancellationObjectionInput): Promise<Session>;
+  issueSessionToken(userId: ID, input: IssueSessionTokenInput): Promise<SessionVerificationToken>;
+  redeemSessionToken(
+    userId: ID,
+    input: RedeemSessionTokenInput,
+  ): Promise<{ session: Session; releasedCredits: number; message: string }>;
   getWallet(userId: ID): Promise<CreditWallet>;
   getLedgerIntegrity(userId: ID): Promise<LedgerIntegrityReport>;
   listMonetaryPayments(userId: ID): Promise<MonetaryPayment[]>;
@@ -55,6 +69,14 @@ export interface Repository {
   reportMonetaryPayment(userId: ID, input: ReportMonetaryPaymentInput): Promise<MonetaryPayment>;
   confirmMonetaryPayment(userId: ID, input: ConfirmMonetaryPaymentInput): Promise<MonetaryPayment>;
   listReviewsAbout(userId: ID): Promise<Review[]>;
+  listReviewsBySession(sessionId: ID): Promise<Review[]>;
+  submitReview(userId: ID, input: ReviewCreateInput): Promise<Review>;
+  listNotifications(userId: ID): Promise<AppNotification[]>;
+  markAllNotificationsRead(userId: ID): Promise<void>;
+  listDisputes(): Promise<DisputeRecord[]>;
+  resolveDispute(moderatorId: ID, input: ResolveDisputeInput): Promise<DisputeRecord>;
+  listSafetyReports(): Promise<SafetyReportRecord[]>;
+  resolveSafetyReport(moderatorId: ID, input: ResolveReportInput): Promise<SafetyReportRecord>;
   reportOrBlockUser(userId: ID, input: SafetyReportInput): Promise<void>;
   listBlockedUserIds(userId: ID): Promise<ID[]>;
 }

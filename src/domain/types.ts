@@ -160,6 +160,8 @@ export type SessionState =
 
 export type CancellationTiming = 'timely' | 'late_review_window';
 
+export type VerificationPhase = 'check_in' | 'check_out';
+
 export interface Session {
   id: ID;
   activityId: ID;
@@ -176,6 +178,35 @@ export interface Session {
   reviewWindowEndsAt?: UtcTimestamp;
   objectionReason?: string;
   objectionSubmittedAt?: UtcTimestamp;
+  checkedInAt?: UtcTimestamp;
+  checkedOutAt?: UtcTimestamp;
+}
+
+export interface SessionVerificationToken {
+  id: ID;
+  sessionId: ID;
+  phase: VerificationPhase;
+  issuerId: ID;
+  /** Short 6-character manual fallback / QR nonce */
+  code: string;
+  /** SHA-256 hex digest stored on the server */
+  tokenHash: string;
+  /** Deep-link QR payload */
+  qrPayload: string;
+  expiresAt: UtcTimestamp;
+  usedAt?: UtcTimestamp;
+  usedBy?: ID;
+}
+
+export interface IssueSessionTokenInput {
+  sessionId: ID;
+  phase: VerificationPhase;
+}
+
+export interface RedeemSessionTokenInput {
+  sessionId: ID;
+  phase: VerificationPhase;
+  code: string;
 }
 
 export interface SessionRequestInput {
@@ -297,6 +328,71 @@ export interface Review {
   rating: 1 | 2 | 3 | 4 | 5;
   comment: string;
   createdAt: UtcTimestamp;
+}
+
+export interface ReviewCreateInput {
+  sessionId: ID;
+  rating: 1 | 2 | 3 | 4 | 5;
+  comment: string;
+}
+
+export type NotificationType =
+  | 'session_requested'
+  | 'session_confirmed'
+  | 'session_completed'
+  | 'credit_released'
+  | 'review_received'
+  | 'dispute_opened'
+  | 'dispute_resolved';
+
+export interface AppNotification {
+  id: ID;
+  userId: ID;
+  type: NotificationType;
+  title: string;
+  body: string;
+  sessionId?: ID;
+  actorId?: ID;
+  readAt?: UtcTimestamp;
+  createdAt: UtcTimestamp;
+}
+
+export type DisputeStatus = 'open' | 'resolved_refund' | 'resolved_release' | 'resolved_split';
+
+export interface DisputeRecord {
+  id: ID;
+  sessionId: ID;
+  activityTitle: string;
+  openedBy: ID;
+  learnerId: ID;
+  instructorId: ID;
+  creditAmount: number;
+  reason: string;
+  status: DisputeStatus;
+  resolutionNote?: string;
+  resolvedBy?: ID;
+  createdAt: UtcTimestamp;
+  resolvedAt?: UtcTimestamp;
+}
+
+export interface ResolveDisputeInput {
+  disputeId: ID;
+  resolution: 'resolved_refund' | 'resolved_release' | 'resolved_split';
+  resolutionNote: string;
+}
+
+export interface SafetyReportRecord {
+  id: ID;
+  reporterId: ID;
+  targetUserId: ID;
+  reason: string;
+  status: 'open' | 'reviewed' | 'dismissed';
+  createdAt: UtcTimestamp;
+}
+
+export interface ResolveReportInput {
+  reportId: ID;
+  status: 'reviewed' | 'dismissed';
 }
 
 export type MatchKind = 'reciprocal' | 'wants_skill' | 'nearby';

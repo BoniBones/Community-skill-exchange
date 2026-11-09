@@ -7,11 +7,15 @@
  */
 import type {
   Activity,
+  AppNotification,
   CreditLedgerEntry,
+  DisputeRecord,
   MonetaryPayment,
   Profile,
   Review,
+  SafetyReportRecord,
   Session,
+  SessionVerificationToken,
 } from '../domain/types';
 
 export const CURRENT_USER_ID = 'u-me';
@@ -528,5 +532,70 @@ export const reviews: Review[] = [
     rating: 4,
     comment: 'Aprendí un montón sobre luz natural. ¡Recomendada!',
     createdAt: at(-30, 21),
+  },
+];
+
+export const verificationTokens: SessionVerificationToken[] = [];
+
+export const notifications: AppNotification[] = [
+  {
+    id: 'notif-1',
+    userId: 'u-me',
+    type: 'session_requested',
+    title: 'Nueva solicitud de sesión',
+    body: 'Lucía Fernández solicitó tomar «Conversación en inglés» con vos.',
+    sessionId: 'ses-english-lucia',
+    actorId: 'u-lucia',
+    createdAt: at(-1, 14),
+  },
+  {
+    id: 'notif-2',
+    userId: 'u-me',
+    type: 'session_confirmed',
+    title: 'Pago mixto informado por Camila',
+    body: 'Camila Sosa informó el envío del tramo en ARS ($ 2.000) para «Piano para principiantes».',
+    sessionId: 'ses-piano-camila',
+    actorId: 'u-camila',
+    createdAt: at(-1, 17, 25),
+  },
+  {
+    id: 'notif-3',
+    userId: 'u-me',
+    type: 'review_received',
+    title: 'Nueva reseña verificada (5 ★)',
+    body: 'Diego Benítez dejó una reseña sobre tu sesión de inglés.',
+    sessionId: 'ses-english-diego',
+    actorId: 'u-diego',
+    readAt: at(-4, 19),
+    createdAt: at(-5, 21, 5),
+  },
+];
+
+export const disputes: DisputeRecord[] = [
+  {
+    id: 'disp-1',
+    sessionId: 'ses-yoga',
+    activityTitle: 'Yoga suave al aire libre',
+    openedBy: 'u-me',
+    learnerId: 'u-me',
+    instructorId: 'u-valentina',
+    creditAmount: 1,
+    reason: 'Tormenta eléctrica fuerte en la plaza de Santo Tomás 2 h antes del encuentro.',
+    status: 'resolved_refund',
+    resolutionNote: 'Fuerza mayor climática verificada: reintegro del 100% sin penalidad.',
+    resolvedBy: 'u-martin',
+    createdAt: at(-3, 8),
+    resolvedAt: at(-3, 12),
+  },
+];
+
+export const reports: SafetyReportRecord[] = [
+  {
+    id: 'rep-1',
+    reporterId: 'u-lucia',
+    targetUserId: 'u-tomas',
+    reason: 'Consulta preventiva: recordar usar espacios públicos en lugar de talleres privados en el primer encuentro.',
+    status: 'open',
+    createdAt: at(-2, 16),
   },
 ];
