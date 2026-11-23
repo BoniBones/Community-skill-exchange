@@ -1,6 +1,6 @@
-# Registro de Decisiones de Arquitectura (ADR) — Community Skill Exchange
+# Registro de Decisiones de Arquitectura (ADR) — CSE
 
-Este documento registra las decisiones arquitectónicas, económicas, de seguridad y de compatibilidad móvil tomadas durante el diseño e implementación de las 6 etapas del MVP de **Community Skill Exchange**.
+Este documento registra las decisiones arquitectónicas, económicas, de seguridad y de compatibilidad móvil tomadas durante el diseño e implementación de las 6 etapas del MVP de **CSE**.
 
 ---
 

@@ -1,4 +1,4 @@
-# Community Skill Exchange
+# CSE (Community Skill Exchange)
 
 Plataforma comunitaria móvil (iOS y Android) para conectar vecinos a través del intercambio de conocimientos, habilidades, servicios y experiencias — concebida inicialmente en torno a la comunidad de **Santo Tomás (Buenos Aires)**, con proyección a **Pilar Centro** y **Presidente Derqui**.
 

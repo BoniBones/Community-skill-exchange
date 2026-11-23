@@ -1,4 +1,4 @@
-# Arquitectura Técnica — Community Skill Exchange
+# Arquitectura Técnica — CSE
 
 Este documento resume la arquitectura aprobada del producto, el modelo de datos relacional, las reglas de integridad del sistema de créditos comunitarios, el ciclo de vida de sesiones y la estrategia de seguridad.
 

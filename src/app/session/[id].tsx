@@ -817,7 +817,7 @@ export default function SessionDetailScreen() {
             Esta sesión fue cancelada con menos de 24 h de anticipación.
           </Text>
           <Text variant="caption" color={colors.text}>
-            En Community Skill Exchange nunca aplicamos penalidades automáticas irreversibles. Los créditos quedan en
+            En CSE nunca aplicamos penalidades automáticas irreversibles. Los créditos quedan en
             custodia durante 48 horas
             {s.reviewWindowEndsAt ? ` (hasta el ${formatShortDate(s.reviewWindowEndsAt)})` : ''} para contemplar causas
             de fuerza mayor o acuerdos entre las partes.

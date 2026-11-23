@@ -4,7 +4,7 @@ export type SupportedLocale = 'es-AR' | 'en';
 
 const dictionaries = {
   'es-AR': {
-    appName: 'Community Skill Exchange',
+    appName: 'CSE',
     communityTagline: 'Todos tenemos algo para enseñar y algo para aprender.',
     communityMission:
       'Enseñá una hora para sumar un crédito comunitario, o combiná créditos y dinero según lo que defina cada instructor.',
@@ -25,7 +25,7 @@ const dictionaries = {
     localeEn: 'English',
   },
   en: {
-    appName: 'Community Skill Exchange',
+    appName: 'CSE',
     communityTagline: 'Everyone has something they can teach, and everyone has something they can learn.',
     communityMission:
       'Teach for one hour to earn one community credit, or combine credits and money as configured by each instructor.',

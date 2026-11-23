@@ -1,6 +1,6 @@
 # Guía de Desarrollo y Vista Previa en Expo Go
 
-Esta guía explica paso a paso cómo instalar dependencias, iniciar el servidor de desarrollo, abrir **Community Skill Exchange** en un teléfono físico mediante **Expo Go**, conectar el backend de **Supabase** y resolver problemas frecuentes.
+Esta guía explica paso a paso cómo instalar dependencias, iniciar el servidor de desarrollo, abrir **CSE** en un teléfono físico mediante **Expo Go**, conectar el backend de **Supabase** y resolver problemas frecuentes.
 
 ---
 
