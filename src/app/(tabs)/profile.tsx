@@ -101,7 +101,7 @@ export default function ProfileScreen() {
         </View>
 
         <Button
-          title="Editar perfil y habilidades"
+          title={t('profileEditBtn')}
           variant="secondary"
           icon="create-outline"
           fullWidth
@@ -112,7 +112,7 @@ export default function ProfileScreen() {
       {/* Skills offered & wanted */}
       <Card style={{ gap: spacing.md }}>
         <View style={{ gap: spacing.sm }}>
-          <Badge label="PUEDO ENSEÑAR" fg={colors.primary} bg={colors.primarySoft} icon="easel-outline" />
+          <Badge label={t('profileOffers')} fg={colors.primary} bg={colors.primarySoft} icon="easel-outline" />
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
             {offers.map((s) => (
               <Chip key={s.skillId} label={skillName(s.skillId)} selected tone={colors.primary} />
@@ -120,7 +120,7 @@ export default function ProfileScreen() {
           </View>
         </View>
         <View style={{ gap: spacing.sm }}>
-          <Badge label="QUIERO APRENDER" fg={colors.accent} bg={colors.accentSoft} icon="bulb-outline" />
+          <Badge label={t('profileWants')} fg={colors.accent} bg={colors.accentSoft} icon="bulb-outline" />
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
             {wants.map((s) => (
               <Chip key={s.skillId} label={skillName(s.skillId)} selected tone={colors.accent} />
@@ -135,11 +135,11 @@ export default function ProfileScreen() {
       {/* Published activities */}
       <View style={{ gap: spacing.md }}>
         <SectionHeader
-          title="Actividades que ofrezco"
+          title={t('profileMyActivities')}
           subtitle="Configurá si aceptás créditos, dinero o pago mixto en cada una"
           action={
             <Button
-              title="Gestionar"
+              title={t('profileManage')}
               variant="secondary"
               icon="settings-outline"
               onPress={() => router.push('/my-activities')}
@@ -154,7 +154,7 @@ export default function ProfileScreen() {
       {/* Reviews */}
       <View style={{ gap: spacing.md }}>
         <SectionHeader
-          title="Reseñas verificadas"
+          title={t('profileReviews')}
           subtitle="Solo quienes completaron una sesión verificada pueden dejar reseña"
         />
         {(reviews.data ?? []).map((r) => {
@@ -176,7 +176,7 @@ export default function ProfileScreen() {
 
       {/* Onboarding, Trust & Diagnostics shortcuts */}
       <Card style={{ backgroundColor: colors.surfaceAlt, gap: spacing.sm }}>
-        <Text variant="bodyStrong">Comunidad, Moderación y Diagnóstico</Text>
+        <Text variant="bodyStrong">{t('profileMoreTitle')}</Text>
         <Text variant="caption" color={colors.textMuted}>
           Accedé a tus notificaciones, al panel de moderación y resolución de disputas, al flujo de bienvenida (+18)
           o al diagnóstico técnico de Expo Go y Supabase.
@@ -199,14 +199,14 @@ export default function ProfileScreen() {
           </View>
         </View>
         <Button
-          title="Notificaciones de la comunidad"
+          title={t('profileNotificationsBtn')}
           variant="secondary"
           icon="notifications-outline"
           fullWidth
           onPress={() => router.push('/notifications')}
         />
         <Button
-          title="Panel de Moderación y Disputas"
+          title={t('profileAdminBtn')}
           variant="secondary"
           icon="shield-checkmark-outline"
           fullWidth
@@ -223,14 +223,14 @@ export default function ProfileScreen() {
           }}
         />
         <Button
-          title="Abrir diagnóstico técnico"
+          title={t('profileDiagnosticsBtn')}
           variant="secondary"
           icon="pulse-outline"
           fullWidth
           onPress={() => router.push('/dev')}
         />
         <Button
-          title="Volver a pantalla de bienvenida"
+          title={t('profileSignOutBtn')}
           variant="ghost"
           icon="log-out-outline"
           fullWidth

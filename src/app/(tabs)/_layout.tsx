@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
 
+import { useI18n } from '../../lib/i18n';
 import type { IconName } from '../../ui/primitives';
 import { colors } from '../../ui/theme';
 
@@ -9,6 +10,7 @@ function TabIcon({ name, color, size }: { name: IconName; color: unknown; size: 
 }
 
 export default function TabsLayout() {
+  const { t } = useI18n();
   return (
     <Tabs
       screenOptions={{
@@ -31,35 +33,35 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Comunidad',
+          title: t('tabCommunity'),
           tabBarIcon: ({ color, size }) => <TabIcon name="people-outline" color={color} size={size} />,
         }}
       />
       <Tabs.Screen
         name="explore"
         options={{
-          title: 'Explorar',
+          title: t('tabExplore'),
           tabBarIcon: ({ color, size }) => <TabIcon name="compass-outline" color={color} size={size} />,
         }}
       />
       <Tabs.Screen
         name="sessions"
         options={{
-          title: 'Sesiones',
+          title: t('tabSessions'),
           tabBarIcon: ({ color, size }) => <TabIcon name="calendar-outline" color={color} size={size} />,
         }}
       />
       <Tabs.Screen
         name="wallet"
         options={{
-          title: 'Créditos',
+          title: t('tabWallet'),
           tabBarIcon: ({ color, size }) => <TabIcon name="time-outline" color={color} size={size} />,
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
-          title: 'Mi perfil',
+          title: t('tabProfile'),
           tabBarIcon: ({ color, size }) => <TabIcon name="person-circle-outline" color={color} size={size} />,
         }}
       />

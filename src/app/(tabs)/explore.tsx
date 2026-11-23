@@ -6,6 +6,7 @@ import { ActivityCard } from '../../components/activity';
 import { CATEGORIES, NEIGHBORHOODS, skillName } from '../../domain/catalog';
 import type { ActivityFormat, CategoryId, MatchKind, PaymentMode } from '../../domain/types';
 import { paymentModeLabel } from '../../lib/format';
+import { useI18n } from '../../lib/i18n';
 import { profiles } from '../../mocks/data';
 import { useActivities, useCurrentUserId, useProfile } from '../../services/queries';
 import { DemoBanner, EmptyState, LoadingState, Screen } from '../../ui/layout';
@@ -16,6 +17,7 @@ const paymentModes: PaymentMode[] = ['credits', 'mixed', 'money'];
 const profileMap = new Map(profiles.map((p) => [p.id, p]));
 
 export default function ExploreScreen() {
+  const { t } = useI18n();
   const params = useLocalSearchParams<{ categoryId?: CategoryId }>();
   const { data: userId } = useCurrentUserId();
   const me = useProfile(userId);
@@ -52,9 +54,9 @@ export default function ExploreScreen() {
       <DemoBanner compact />
 
       <View style={{ gap: 4 }}>
-        <Text variant="title">Explorar actividades</Text>
+        <Text variant="title">{t('exploreTitle')}</Text>
         <Text variant="caption" color={colors.textMuted}>
-          Filtrá por habilidad, coincidencia recíproca, formato, barrio o modalidad de intercambio.
+          {t('exploreSubtitle')}
         </Text>
       </View>
 
@@ -76,7 +78,7 @@ export default function ExploreScreen() {
         <TextInput
           value={query}
           onChangeText={setQuery}
-          placeholder="Buscar habilidad, actividad o instructor…"
+          placeholder={t('exploreSearchPlaceholder')}
           placeholderTextColor={colors.textMuted}
           style={{ flex: 1, fontSize: 15, color: colors.text, paddingVertical: 8 }}
         />
@@ -85,24 +87,24 @@ export default function ExploreScreen() {
       {/* Matching & Format quick filter */}
       <View style={{ gap: spacing.xs }}>
         <Text variant="label" color={colors.textMuted}>
-          EMPAREJAMIENTO Y FORMATO
+          {t('exploreMatchFormatLabel')}
         </Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
           <Chip
-            label="Solo intercambio mutuo"
+            label={t('exploreReciprocalOnly')}
             icon="swap-horizontal"
             selected={onlyReciprocal}
             tone={colors.accent}
             onPress={() => setOnlyReciprocal((v) => !v)}
           />
           <Chip
-            label="Presencial"
+            label={t('exploreInPerson')}
             icon="people-outline"
             selected={format === 'in_person'}
             onPress={() => setFormat(format === 'in_person' ? undefined : 'in_person')}
           />
           <Chip
-            label="Online"
+            label={t('exploreOnline')}
             icon="videocam-outline"
             selected={format === 'online'}
             onPress={() => setFormat(format === 'online' ? undefined : 'online')}
@@ -113,10 +115,10 @@ export default function ExploreScreen() {
       {/* Payment mode filter */}
       <View style={{ gap: spacing.xs }}>
         <Text variant="label" color={colors.textMuted}>
-          MODALIDAD DE PAGO
+          {t('explorePaymentLabel')}
         </Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
-          <Chip label="Todas" selected={!paymentMode} onPress={() => setPaymentMode(undefined)} />
+          <Chip label={t('exploreAll')} selected={!paymentMode} onPress={() => setPaymentMode(undefined)} />
           {paymentModes.map((m) => (
             <Chip
               key={m}
