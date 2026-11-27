@@ -2,11 +2,14 @@ import { createContext, useContext, useState, type ReactNode } from 'react';
 
 import type { ID, UserSkill } from '../../domain/types';
 import { config } from '../../lib/config';
+import { t } from '../../lib/i18n';
 import { getSupabase } from '../../services/supabase';
 
 export interface OnboardingDraft {
   displayName: string;
+  avatarUrl?: string;
   neighborhoodId: ID;
+  neighborhoodVerifiedAt?: string | null;
   bio: string;
   availabilitySummary: string;
   skills: UserSkill[];
@@ -50,7 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const sendOtp = async (rawEmail: string, isNew: boolean) => {
     const trimmed = rawEmail.trim().toLowerCase();
     if (!trimmed || !trimmed.includes('@')) {
-      throw new Error('Ingresá un email válido.');
+      throw new Error(t('errInvalidEmail'));
     }
     setEmail(trimmed);
     setIsNewRegistration(isNew);
@@ -67,7 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const verifyOtp = async (code: string): Promise<{ nextRoute: '/(onboarding)/eligibility' | '/(tabs)' }> => {
     const digits = code.trim();
     if (digits.length !== 6) {
-      throw new Error('El código debe tener 6 dígitos.');
+      throw new Error(t('errOtpLength'));
     }
 
     const sb = getSupabase();
@@ -84,6 +87,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (isNewRegistration) {
       setOnboardingCompleted(false);
+      setDraft({
+        ...defaultDraft,
+        avatarUrl: undefined,
+        neighborhoodId: 'n-santo-tomas',
+        neighborhoodVerifiedAt: undefined,
+      });
       return { nextRoute: '/(onboarding)/eligibility' };
     }
     setOnboardingCompleted(true);
@@ -95,6 +104,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const markOnboardingCompleted = () => {
+    if (!draft.neighborhoodVerifiedAt) {
+      throw new Error(t('repoErrNeighborhoodCodeRequired'));
+    }
     setOnboardingCompleted(true);
     setIsNewRegistration(false);
   };
@@ -102,6 +114,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const resetToNewOnboarding = () => {
     setIsNewRegistration(true);
     setOnboardingCompleted(false);
+    setDraft({
+      ...defaultDraft,
+      avatarUrl: undefined,
+      neighborhoodId: 'n-santo-tomas',
+      neighborhoodVerifiedAt: undefined,
+    });
   };
 
   const signOut = () => {

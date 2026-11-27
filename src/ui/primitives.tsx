@@ -1,7 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
-import type { ComponentProps, ReactNode } from 'react';
+import { useState, type ComponentProps, type ReactNode } from 'react';
 import {
   ActivityIndicator,
+  Animated,
+  Image,
   Pressable,
   Text as RNText,
   View,
@@ -13,7 +15,8 @@ import {
 } from 'react-native';
 
 import { initials } from '../lib/format';
-import { colors, radius, shadow, spacing, typography, type TypographyVariant } from './theme';
+import { useI18n } from '../lib/i18n';
+import { getContrastTextColor, radius, spacing, typography, useTheme, type TypographyVariant } from './theme';
 
 export type IconName = ComponentProps<typeof Ionicons>['name'];
 
@@ -25,8 +28,14 @@ interface TextProps extends RNTextProps {
   align?: TextStyle['textAlign'];
 }
 
-export function Text({ variant = 'body', color = colors.text, align, style, ...rest }: TextProps) {
-  return <RNText {...rest} style={[typography[variant], { color, textAlign: align }, style]} />;
+export function Text({ variant = 'body', color, align, style, ...rest }: TextProps) {
+  const { colors } = useTheme();
+  return (
+    <RNText
+      {...rest}
+      style={[typography[variant], { color: color ?? colors.text, textAlign: align }, style]}
+    />
+  );
 }
 
 /* ──────────────────────────── Button ──────────────────────────── */
@@ -42,23 +51,44 @@ interface ButtonProps extends Omit<PressableProps, 'style' | 'children'> {
   style?: StyleProp<ViewStyle>;
 }
 
-const buttonPalette: Record<ButtonVariant, { bg: string; fg: string; border: string }> = {
-  primary: { bg: colors.primary, fg: colors.textInverse, border: colors.primary },
-  secondary: { bg: colors.surface, fg: colors.primary, border: colors.primary },
-  ghost: { bg: 'transparent', fg: colors.primary, border: 'transparent' },
-  danger: { bg: colors.surface, fg: colors.danger, border: colors.danger },
-};
-
 export function Button({ title, variant = 'primary', icon, loading, fullWidth, disabled, style, ...rest }: ButtonProps) {
-  const p = buttonPalette[variant];
+  const { colors } = useTheme();
+  const [scale] = useState(() => new Animated.Value(1));
+
+  const palette: Record<ButtonVariant, { bg: string; fg: string; border: string }> = {
+    primary: { bg: colors.primary, fg: colors.onPrimary, border: colors.primary },
+    secondary: { bg: colors.surface, fg: colors.primary, border: colors.primary },
+    ghost: { bg: 'transparent', fg: colors.primary, border: 'transparent' },
+    danger: { bg: colors.surface, fg: colors.danger, border: colors.danger },
+  };
+
+  const p = palette[variant];
   const isDisabled = disabled || loading;
+
+  const animateTo = (toValue: number) => {
+    Animated.spring(scale, {
+      toValue,
+      useNativeDriver: true,
+      speed: 40,
+      bounciness: 0,
+    }).start();
+  };
+
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ disabled: !!isDisabled, busy: !!loading }}
-      disabled={isDisabled}
-      style={({ pressed }) => [
-        {
+    <Animated.View style={[{ transform: [{ scale }], alignSelf: fullWidth ? 'stretch' : 'auto' }, style]}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ disabled: !!isDisabled, busy: !!loading }}
+        disabled={isDisabled}
+        onPressIn={(e) => {
+          if (!isDisabled) animateTo(0.985);
+          rest.onPressIn?.(e);
+        }}
+        onPressOut={(e) => {
+          animateTo(1);
+          rest.onPressOut?.(e);
+        }}
+        style={({ pressed }) => ({
           minHeight: 48,
           paddingHorizontal: spacing.xl,
           borderRadius: radius.pill,
@@ -69,56 +99,74 @@ export function Button({ title, variant = 'primary', icon, loading, fullWidth, d
           alignItems: 'center',
           justifyContent: 'center',
           gap: spacing.sm,
-          opacity: isDisabled ? 0.5 : pressed ? 0.85 : 1,
-          alignSelf: fullWidth ? 'stretch' : 'auto',
-        },
-        style,
-      ]}
-      {...rest}
-    >
-      {loading ? (
-        <ActivityIndicator color={p.fg} />
-      ) : (
-        <>
-          {icon ? <Ionicons name={icon} size={18} color={p.fg} /> : null}
-          <Text variant="bodyStrong" color={p.fg}>
-            {title}
-          </Text>
-        </>
-      )}
-    </Pressable>
+          opacity: isDisabled ? 0.5 : pressed ? 0.88 : 1,
+        })}
+        {...rest}
+      >
+        {loading ? (
+          <ActivityIndicator color={p.fg} />
+        ) : (
+          <>
+            {icon ? <Ionicons name={icon} size={18} color={p.fg} /> : null}
+            <Text variant="bodyStrong" color={p.fg}>
+              {title}
+            </Text>
+          </>
+        )}
+      </Pressable>
+    </Animated.View>
   );
 }
 
 /* ───────────────────────────── Card ───────────────────────────── */
 
+export type CardVariant = 'elevated' | 'flat' | 'tinted';
+
 interface CardProps {
   children: ReactNode;
+  variant?: CardVariant;
   onPress?: () => void;
   style?: StyleProp<ViewStyle>;
   accessibilityLabel?: string;
 }
 
-const cardStyle: ViewStyle = {
-  backgroundColor: colors.surface,
-  borderRadius: radius.lg,
-  padding: spacing.lg,
-  borderWidth: 1,
-  borderColor: colors.border,
-  ...shadow.card,
-};
+export function Card({ children, variant = 'elevated', onPress, style, accessibilityLabel }: CardProps) {
+  const { colors, shadow } = useTheme();
+  const [scale] = useState(() => new Animated.Value(1));
 
-export function Card({ children, onPress, style, accessibilityLabel }: CardProps) {
-  if (!onPress) return <View style={[cardStyle, style]}>{children}</View>;
+  const baseStyle: ViewStyle = {
+    backgroundColor: variant === 'tinted' ? colors.surfaceAlt : colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...(variant === 'elevated' ? shadow : {}),
+  };
+
+  if (!onPress) return <View style={[baseStyle, style]}>{children}</View>;
+
+  const animateTo = (toValue: number) => {
+    Animated.spring(scale, {
+      toValue,
+      useNativeDriver: true,
+      speed: 40,
+      bounciness: 0,
+    }).start();
+  };
+
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      onPress={onPress}
-      style={({ pressed }) => [cardStyle, { opacity: pressed ? 0.9 : 1 }, style]}
-    >
-      {children}
-    </Pressable>
+    <Animated.View style={{ transform: [{ scale }] }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel}
+        onPress={onPress}
+        onPressIn={() => animateTo(0.985)}
+        onPressOut={() => animateTo(1)}
+        style={({ pressed }) => [baseStyle, { opacity: pressed ? 0.92 : 1 }, style]}
+      >
+        {children}
+      </Pressable>
+    </Animated.View>
   );
 }
 
@@ -132,11 +180,15 @@ interface ChipProps {
   tone?: string;
 }
 
-export function Chip({ label, selected, icon, onPress, tone = colors.primary }: ChipProps) {
+export function Chip({ label, selected, icon, onPress, tone }: ChipProps) {
+  const { colors } = useTheme();
+  const resolvedTone = tone ?? colors.primary;
+  const selectedFg = resolvedTone === colors.primary ? colors.onPrimary : getContrastTextColor(resolvedTone);
+
   const content = (
     <>
-      {icon ? <Ionicons name={icon} size={14} color={selected ? colors.textInverse : tone} /> : null}
-      <Text variant="caption" color={selected ? colors.textInverse : colors.text} style={{ fontWeight: '600' }}>
+      {icon ? <Ionicons name={icon} size={14} color={selected ? selectedFg : resolvedTone} /> : null}
+      <Text variant="caption" color={selected ? selectedFg : colors.text} style={{ fontWeight: '600' }}>
         {label}
       </Text>
     </>
@@ -148,9 +200,9 @@ export function Chip({ label, selected, icon, onPress, tone = colors.primary }: 
     paddingHorizontal: spacing.md,
     paddingVertical: 7,
     borderRadius: radius.pill,
-    backgroundColor: selected ? tone : colors.surface,
+    backgroundColor: selected ? resolvedTone : colors.surface,
     borderWidth: 1,
-    borderColor: selected ? tone : colors.border,
+    borderColor: selected ? resolvedTone : colors.border,
   };
   if (!onPress) return <View style={style}>{content}</View>;
   return (
@@ -194,13 +246,36 @@ export function Badge({ label, fg, bg, icon }: { label: string; fg: string; bg: 
 
 const avatarColors = ['#0F766E', '#C2410C', '#7C3AED', '#2563EB', '#B45309', '#15803D', '#BE185D'];
 
-export function Avatar({ name, size = 44 }: { name: string; size?: number }) {
+export function Avatar({ name, uri, size = 44 }: { name: string; uri?: string; size?: number }) {
+  const { colors } = useTheme();
+  const { t } = useI18n();
+  const [failedUri, setFailedUri] = useState<string | null>(null);
+
   let hash = 0;
   for (const ch of name) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
   const bg = avatarColors[hash % avatarColors.length];
+  const label = t('avatarPhotoA11y', { name });
+
+  if (uri && failedUri !== uri) {
+    return (
+      <Image
+        source={{ uri }}
+        resizeMode="cover"
+        accessibilityLabel={label}
+        onError={() => setFailedUri(uri)}
+        style={{
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: colors.surfaceAlt,
+        }}
+      />
+    );
+  }
+
   return (
     <View
-      accessibilityLabel={`Foto de ${name}`}
+      accessibilityLabel={label}
       style={{
         width: size,
         height: size,
@@ -210,7 +285,7 @@ export function Avatar({ name, size = 44 }: { name: string; size?: number }) {
         justifyContent: 'center',
       }}
     >
-      <Text color={colors.textInverse} style={{ fontSize: size * 0.38, fontWeight: '700' }}>
+      <Text color={getContrastTextColor(bg)} style={{ fontSize: size * 0.38, fontWeight: '700' }}>
         {initials(name)}
       </Text>
     </View>

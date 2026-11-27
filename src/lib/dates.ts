@@ -7,11 +7,19 @@
  * rendering is correct even on JS engines without full time-zone data.
  */
 import { config } from './config';
+import { getActiveLocale, type SupportedLocale } from './i18n';
 
 const BA_OFFSET_MIN = -180;
 
-const WEEKDAYS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
-const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+export const WEEKDAYS_BY_LOCALE: Record<SupportedLocale, readonly string[]> = {
+  'es-AR': ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'],
+  en: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
+};
+
+export const MONTHS_BY_LOCALE: Record<SupportedLocale, readonly string[]> = {
+  'es-AR': ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'],
+  en: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+};
 
 interface LocalParts {
   year: number;
@@ -68,20 +76,62 @@ export function toBuenosAiresParts(utc: string | Date): LocalParts {
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
-/** "jueves 12 nov · 18:00" in Buenos Aires time. */
-export function formatSessionDate(utc: string): string {
+/** "jueves 12 nov · 18:00" (es-AR) or "Thursday, Nov 12 · 18:00" (en) in Buenos Aires time. */
+export function formatSessionDate(utc: string, locale: SupportedLocale = getActiveLocale()): string {
   const p = toBuenosAiresParts(utc);
-  return `${WEEKDAYS[p.weekday]} ${p.day} ${MONTHS[p.month]} · ${pad(p.hour)}:${pad(p.minute)}`;
+  const safeLocale: SupportedLocale = locale === 'en' ? 'en' : 'es-AR';
+  const weekdays = WEEKDAYS_BY_LOCALE[safeLocale];
+  const months = MONTHS_BY_LOCALE[safeLocale];
+  if (safeLocale === 'en') {
+    return `${weekdays[p.weekday]}, ${months[p.month]} ${p.day} · ${pad(p.hour)}:${pad(p.minute)}`;
+  }
+  return `${weekdays[p.weekday]} ${p.day} ${months[p.month]} · ${pad(p.hour)}:${pad(p.minute)}`;
 }
 
-/** "12 nov 2026" in Buenos Aires time. */
-export function formatShortDate(utc: string): string {
+/** "12 nov 2026" (es-AR) or "Nov 12, 2026" (en) in Buenos Aires time. */
+export function formatShortDate(utc: string, locale: SupportedLocale = getActiveLocale()): string {
   const p = toBuenosAiresParts(utc);
-  return `${p.day} ${MONTHS[p.month]} ${p.year}`;
+  const safeLocale: SupportedLocale = locale === 'en' ? 'en' : 'es-AR';
+  const months = MONTHS_BY_LOCALE[safeLocale];
+  if (safeLocale === 'en') {
+    return `${months[p.month]} ${p.day}, ${p.year}`;
+  }
+  return `${p.day} ${months[p.month]} ${p.year}`;
 }
 
 /** "18:00" in Buenos Aires time. */
 export function formatTime(utc: string): string {
   const p = toBuenosAiresParts(utc);
   return `${pad(p.hour)}:${pad(p.minute)}`;
+}
+
+/**
+ * Validates that (year, month, day) represent a finite integer Gregorian calendar date
+ * (month 1..12, day 1..31, exact UTC calendar round-trip with no rollover) not in the future,
+ * with year >= minYear (default 1900).
+ */
+export function isValidBirthDate(
+  year: number,
+  month: number,
+  day: number,
+  options: { minYear?: number; now?: Date } = {},
+): boolean {
+  const minYear = options.minYear ?? 1900;
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+    return false;
+  }
+  if (year < minYear || month < 1 || month > 12 || day < 1 || day > 31) {
+    return false;
+  }
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  if (
+    dt.getUTCFullYear() !== year ||
+    dt.getUTCMonth() !== month - 1 ||
+    dt.getUTCDate() !== day
+  ) {
+    return false;
+  }
+  const now = options.now ?? new Date();
+  const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return dt.getTime() <= todayUtc;
 }

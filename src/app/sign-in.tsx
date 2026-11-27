@@ -3,13 +3,17 @@ import { useState } from 'react';
 import { TextInput, View } from 'react-native';
 
 import { useAuth } from '../features/auth/authContext';
+import { useI18n } from '../lib/i18n';
 import { DemoBanner, Screen } from '../ui/layout';
 import { Badge, Button, Card, Chip, Text } from '../ui/primitives';
-import { colors, radius, spacing } from '../ui/theme';
+import { radius, spacing, useTheme } from '../ui/theme';
 
 export default function SignIn() {
   const params = useLocalSearchParams<{ mode?: 'register' | 'login' }>();
   const { email: savedEmail, sendOtp } = useAuth();
+  const { colors } = useTheme();
+  const { t } = useI18n();
+
   const [mode, setMode] = useState<'register' | 'login'>(params.mode === 'register' ? 'register' : 'login');
   const [email, setEmail] = useState(savedEmail || 'sofia.romero@comunidad.ar');
   const [loading, setLoading] = useState(false);
@@ -22,7 +26,7 @@ export default function SignIn() {
       await sendOtp(email, mode === 'register');
       router.push('/verify-otp');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'No pudimos enviar el código.');
+      setError(e instanceof Error ? e.message : t('signInErrFallback'));
     } finally {
       setLoading(false);
     }
@@ -32,15 +36,15 @@ export default function SignIn() {
     <Screen edges={['bottom']}>
       <DemoBanner compact />
 
-      <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+      <View style={{ flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap' }}>
         <Chip
-          label="Crear cuenta nueva"
+          label={t('signInTabRegister')}
           icon="person-add-outline"
           selected={mode === 'register'}
           onPress={() => setMode('register')}
         />
         <Chip
-          label="Ya tengo cuenta"
+          label={t('signInTabLogin')}
           icon="log-in-outline"
           selected={mode === 'login'}
           onPress={() => setMode('login')}
@@ -48,22 +52,20 @@ export default function SignIn() {
       </View>
 
       <View style={{ gap: 4 }}>
-        <Text variant="title">{mode === 'register' ? 'Sumate a la comunidad' : 'Ingresá con tu email'}</Text>
+        <Text variant="title">{mode === 'register' ? t('signInTitleRegister') : t('signInTitleLogin')}</Text>
         <Text color={colors.textMuted}>
-          {mode === 'register'
-            ? 'Te enviamos un código de 6 dígitos por email. Luego verificamos tu elegibilidad (+18) y armamos tu perfil de habilidades.'
-            : 'Te enviamos un código de 6 dígitos a tu correo para ingresar sin contraseñas.'}
+          {mode === 'register' ? t('signInSubtitleRegister') : t('signInSubtitleLogin')}
         </Text>
       </View>
 
       <View style={{ gap: spacing.xs }}>
         <Text variant="label" color={colors.textMuted}>
-          CORREO ELECTRÓNICO
+          {t('signInEmailLabel')}
         </Text>
         <TextInput
           value={email}
           onChangeText={setEmail}
-          placeholder="tu@email.com"
+          placeholder={t('signInEmailPlaceholder')}
           placeholderTextColor={colors.textMuted}
           keyboardType="email-address"
           autoCapitalize="none"
@@ -86,16 +88,15 @@ export default function SignIn() {
         ) : null}
       </View>
 
-      <Card style={{ backgroundColor: colors.surfaceAlt, gap: spacing.xs }}>
-        <Badge label="SEGURIDAD Y PRIVACIDAD" fg={colors.primary} bg={colors.primarySoft} icon="shield-checkmark-outline" />
+      <Card variant="tinted" style={{ gap: spacing.xs }}>
+        <Badge label={t('signInSafetyBadge')} fg={colors.primary} bg={colors.primarySoft} icon="shield-checkmark-outline" />
         <Text variant="caption" color={colors.textMuted}>
-          • Tu correo y teléfono nunca son públicos.{'\n'}• El piloto inicial está habilitado para mayores de 18 años.
-          {'\n'}• Los créditos iniciales comienzan en 0 y recibís el incentivo al publicar tu primera actividad.
+          {t('signInSafetyBullets')}
         </Text>
       </Card>
 
       <Button
-        title="Enviar código de 6 dígitos"
+        title={t('signInSendCode')}
         icon="paper-plane-outline"
         loading={loading}
         fullWidth

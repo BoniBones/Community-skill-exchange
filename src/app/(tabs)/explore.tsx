@@ -1,29 +1,27 @@
 import { useLocalSearchParams } from 'expo-router';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ScrollView, TextInput, View } from 'react-native';
 
 import { ActivityCard } from '../../components/activity';
-import { CATEGORIES, NEIGHBORHOODS, skillName } from '../../domain/catalog';
-import type { ActivityFormat, CategoryId, MatchKind, PaymentMode } from '../../domain/types';
-import { paymentModeLabel } from '../../lib/format';
-import { profiles } from '../../mocks/data';
-import { useActivities, useCurrentUserId, useProfile } from '../../services/queries';
+import { CATEGORIES, getCategoryColor, getCategoryName, NEIGHBORHOODS, skillName } from '../../domain/catalog';
+import type { ActivityFormat, CategoryId, MatchKind } from '../../domain/types';
+import { useI18n } from '../../lib/i18n';
+import { useActivities, useCurrentUserId, useProfile, useProfiles } from '../../services/queries';
 import { DemoBanner, EmptyState, LoadingState, Screen } from '../../ui/layout';
 import { Chip, Ionicons, Text } from '../../ui/primitives';
-import { colors, radius, spacing } from '../../ui/theme';
-
-const paymentModes: PaymentMode[] = ['credits', 'mixed', 'money'];
-const profileMap = new Map(profiles.map((p) => [p.id, p]));
+import { radius, spacing, useTheme } from '../../ui/theme';
 
 export default function ExploreScreen() {
   const params = useLocalSearchParams<{ categoryId?: CategoryId }>();
+  const { colors, resolvedScheme } = useTheme();
+  const { locale, t } = useI18n();
   const { data: userId } = useCurrentUserId();
   const me = useProfile(userId);
+  const allProfiles = useProfiles();
 
   const [query, setQuery] = useState('');
   const [lastParamCategory, setLastParamCategory] = useState<CategoryId | undefined>(params.categoryId);
   const [categoryId, setCategoryId] = useState<CategoryId | undefined>(params.categoryId);
-  const [paymentMode, setPaymentMode] = useState<PaymentMode | undefined>();
   const [neighborhoodId, setNeighborhoodId] = useState<string | undefined>();
   const [format, setFormat] = useState<ActivityFormat | undefined>();
   const [onlyReciprocal, setOnlyReciprocal] = useState(false);
@@ -36,25 +34,36 @@ export default function ExploreScreen() {
   const activities = useActivities({
     query,
     categoryId,
-    paymentMode,
     neighborhoodId,
     format,
     onlyReciprocal,
   });
 
+  const profileMap = useMemo(
+    () => new Map((allProfiles.data ?? []).map((p) => [p.id, p])),
+    [allProfiles.data],
+  );
+
   const myOffers = new Set((me.data?.skills ?? []).filter((s) => s.kind === 'offers').map((s) => s.skillId));
   const myWants = new Set((me.data?.skills ?? []).filter((s) => s.kind === 'wants').map((s) => s.skillId));
 
-  const hasFilters = Boolean(query || categoryId || paymentMode || neighborhoodId || format || onlyReciprocal);
+  const hasFilters = Boolean(query || categoryId || neighborhoodId || format || onlyReciprocal);
+  const results = activities.data ?? [];
 
   return (
-    <Screen refreshing={activities.isRefetching} onRefresh={() => activities.refetch()}>
+    <Screen
+      refreshing={activities.isRefetching}
+      onRefresh={() => {
+        activities.refetch();
+        allProfiles.refetch();
+      }}
+    >
       <DemoBanner compact />
 
       <View style={{ gap: 4 }}>
-        <Text variant="title">Explorar actividades</Text>
+        <Text variant="title">{t('exploreTitle')}</Text>
         <Text variant="caption" color={colors.textMuted}>
-          Filtrá por habilidad, coincidencia recíproca, formato, barrio o modalidad de intercambio.
+          {t('exploreSubtitle')}
         </Text>
       </View>
 
@@ -76,7 +85,7 @@ export default function ExploreScreen() {
         <TextInput
           value={query}
           onChangeText={setQuery}
-          placeholder="Buscar habilidad, actividad o instructor…"
+          placeholder={t('exploreSearchPlaceholder')}
           placeholderTextColor={colors.textMuted}
           style={{ flex: 1, fontSize: 15, color: colors.text, paddingVertical: 8 }}
         />
@@ -85,24 +94,24 @@ export default function ExploreScreen() {
       {/* Matching & Format quick filter */}
       <View style={{ gap: spacing.xs }}>
         <Text variant="label" color={colors.textMuted}>
-          EMPAREJAMIENTO Y FORMATO
+          {t('exploreMatchFormatLabel')}
         </Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
           <Chip
-            label="Solo intercambio mutuo"
+            label={t('exploreOnlyReciprocal')}
             icon="swap-horizontal"
             selected={onlyReciprocal}
             tone={colors.accent}
             onPress={() => setOnlyReciprocal((v) => !v)}
           />
           <Chip
-            label="Presencial"
+            label={t('exploreInPerson')}
             icon="people-outline"
             selected={format === 'in_person'}
             onPress={() => setFormat(format === 'in_person' ? undefined : 'in_person')}
           />
           <Chip
-            label="Online"
+            label={t('exploreOnline')}
             icon="videocam-outline"
             selected={format === 'online'}
             onPress={() => setFormat(format === 'online' ? undefined : 'online')}
@@ -110,32 +119,13 @@ export default function ExploreScreen() {
         </ScrollView>
       </View>
 
-      {/* Payment mode filter */}
-      <View style={{ gap: spacing.xs }}>
-        <Text variant="label" color={colors.textMuted}>
-          MODALIDAD DE PAGO
-        </Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
-          <Chip label="Todas" selected={!paymentMode} onPress={() => setPaymentMode(undefined)} />
-          {paymentModes.map((m) => (
-            <Chip
-              key={m}
-              label={paymentModeLabel[m]}
-              selected={paymentMode === m}
-              tone={m === 'credits' ? colors.credit : m === 'money' ? colors.money : colors.primary}
-              onPress={() => setPaymentMode(paymentMode === m ? undefined : m)}
-            />
-          ))}
-        </ScrollView>
-      </View>
-
       {/* Neighborhood filter */}
       <View style={{ gap: spacing.xs }}>
         <Text variant="label" color={colors.textMuted}>
-          ZONA
+          {t('exploreZoneLabel')}
         </Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
-          <Chip label="Todas las zonas" selected={!neighborhoodId} onPress={() => setNeighborhoodId(undefined)} />
+          <Chip label={t('exploreAllZones')} selected={!neighborhoodId} onPress={() => setNeighborhoodId(undefined)} />
           {NEIGHBORHOODS.map((n) => (
             <Chip
               key={n.id}
@@ -151,16 +141,16 @@ export default function ExploreScreen() {
       {/* Category filter */}
       <View style={{ gap: spacing.xs }}>
         <Text variant="label" color={colors.textMuted}>
-          CATEGORÍA
+          {t('exploreCategoryLabel')}
         </Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
-          <Chip label="Todas" selected={!categoryId} onPress={() => setCategoryId(undefined)} />
+          <Chip label={t('exploreAllCategories')} selected={!categoryId} onPress={() => setCategoryId(undefined)} />
           {CATEGORIES.map((c) => (
             <Chip
               key={c.id}
-              label={c.name}
+              label={getCategoryName(c, locale)}
               selected={categoryId === c.id}
-              tone={c.color}
+              tone={getCategoryColor(c, resolvedScheme)}
               onPress={() => setCategoryId(categoryId === c.id ? undefined : c.id)}
             />
           ))}
@@ -169,19 +159,18 @@ export default function ExploreScreen() {
 
       {/* Results */}
       {activities.isLoading ? (
-        <LoadingState label="Buscando actividades…" />
-      ) : (activities.data ?? []).length === 0 ? (
+        <LoadingState label={t('exploreLoading')} />
+      ) : results.length === 0 ? (
         <EmptyState
           icon="search-outline"
-          title="No encontramos actividades con esos filtros"
-          message="Probá limpiar los filtros o buscar otra habilidad."
-          actionLabel={hasFilters ? 'Limpiar filtros' : undefined}
+          title={t('exploreEmptyTitle')}
+          message={t('exploreEmptyMessage')}
+          actionLabel={hasFilters ? t('exploreClearFilters') : undefined}
           onAction={
             hasFilters
               ? () => {
                   setQuery('');
                   setCategoryId(undefined);
-                  setPaymentMode(undefined);
                   setNeighborhoodId(undefined);
                   setFormat(undefined);
                   setOnlyReciprocal(false);
@@ -192,10 +181,11 @@ export default function ExploreScreen() {
       ) : (
         <View style={{ gap: spacing.md }}>
           <Text variant="caption" color={colors.textMuted}>
-            {(activities.data ?? []).length} {(activities.data ?? []).length === 1 ? 'actividad' : 'actividades'}{' '}
-            disponibles
+            {results.length === 1
+              ? t('exploreCountSingle', { count: results.length })
+              : t('exploreCountPlural', { count: results.length })}
           </Text>
-          {(activities.data ?? []).map((a) => {
+          {results.map((a) => {
             const inst = profileMap.get(a.instructorId);
             const reasons: MatchKind[] = [];
             let footnote: string | undefined;
@@ -203,7 +193,10 @@ export default function ExploreScreen() {
               const recip = inst.skills.find((s) => s.kind === 'wants' && myOffers.has(s.skillId));
               if (recip) {
                 reasons.push('reciprocal');
-                footnote = `💡 ${inst.displayName.split(' ')[0]} quiere aprender ${skillName(recip.skillId)} (que vos enseñás)`;
+                footnote = t('reciprocalFootnote', {
+                  name: inst.displayName.split(' ')[0],
+                  skill: skillName(recip.skillId, locale),
+                });
               }
               if (myWants.has(a.skillId)) reasons.push('wants_skill');
               if (me.data && inst.neighborhoodId === me.data.neighborhoodId) reasons.push('nearby');

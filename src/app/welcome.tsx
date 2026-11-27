@@ -2,74 +2,62 @@ import { router } from 'expo-router';
 import { View } from 'react-native';
 
 import { useAuth } from '../features/auth/authContext';
+import { useI18n } from '../lib/i18n';
 import { DemoBanner, Screen } from '../ui/layout';
-import { Button, IconCircle, Text, type IconName } from '../ui/primitives';
-import { colors, radius, spacing } from '../ui/theme';
-
-const pillars: { icon: IconName; color: string; title: string; body: string }[] = [
-  {
-    icon: 'bulb-outline',
-    color: colors.primary,
-    title: 'Aprendé',
-    body: 'Todos tenemos algo para enseñar y algo para aprender. Descubrí lo que saben tus vecinos.',
-  },
-  {
-    icon: 'swap-horizontal',
-    color: colors.credit,
-    title: 'Intercambiá',
-    body: 'Una hora enseñando puede darte un crédito para aprender otra cosa. También podés usar dinero, o combinar ambos.',
-  },
-  {
-    icon: 'people-outline',
-    color: colors.accent,
-    title: 'Conectá',
-    body: 'Conocé gente de Santo Tomás, Pilar y Derqui con intereses como los tuyos en espacios públicos seguros.',
-  },
-];
+import { Button, Card, IconCircle, Ionicons, Text, type IconName } from '../ui/primitives';
+import { FadeInView, radius, spacing, useTheme } from '../ui/theme';
 
 export default function Welcome() {
   const { resetToNewOnboarding } = useAuth();
+  const { colors } = useTheme();
+  const { t } = useI18n();
+
+  const pillars: { icon: IconName; color: string; title: string; body: string }[] = [
+    {
+      icon: 'bulb-outline',
+      color: colors.primary,
+      title: t('welcomePillarLearnTitle'),
+      body: t('welcomePillarLearnBody'),
+    },
+    {
+      icon: 'swap-horizontal',
+      color: colors.credit,
+      title: t('welcomePillarExchangeTitle'),
+      body: t('welcomePillarExchangeBody'),
+    },
+    {
+      icon: 'people-outline',
+      color: colors.accent,
+      title: t('welcomePillarConnectTitle'),
+      body: t('welcomePillarConnectBody'),
+    },
+  ];
 
   return (
     <Screen edges={['top', 'bottom']} contentStyle={{ gap: spacing.xl, paddingTop: spacing.xl }}>
-      <View style={{ gap: spacing.md }}>
+      <FadeInView style={{ gap: spacing.md }}>
         <View
           style={{
-            width: 64,
-            height: 64,
+            width: 60,
+            height: 60,
             borderRadius: radius.lg,
             backgroundColor: colors.primary,
             alignItems: 'center',
             justifyContent: 'center',
           }}
         >
-          <Text style={{ fontSize: 30 }} accessibilityElementsHidden>
-            🤝
-          </Text>
+          <Ionicons name="people" size={30} color={colors.onPrimary} />
         </View>
         <Text variant="label" color={colors.accent}>
-          COMMUNITY SKILL EXCHANGE
+          {t('welcomeBrand')}
         </Text>
-        <Text variant="display">Compartí lo que sabés. Aprendé lo que te apasiona.</Text>
-        <Text color={colors.textMuted}>
-          Una comunidad para intercambiar conocimientos, habilidades y experiencias, sin que el dinero sea una barrera.
-        </Text>
-      </View>
+        <Text variant="display">{t('welcomeHeroTitle')}</Text>
+        <Text color={colors.textMuted}>{t('welcomeHeroSubtitle')}</Text>
+      </FadeInView>
 
-      <View style={{ gap: spacing.md }}>
+      <FadeInView delay={80} style={{ gap: spacing.md }}>
         {pillars.map((p) => (
-          <View
-            key={p.title}
-            style={{
-              flexDirection: 'row',
-              gap: spacing.md,
-              backgroundColor: colors.surface,
-              padding: spacing.lg,
-              borderRadius: radius.lg,
-              borderWidth: 1,
-              borderColor: colors.border,
-            }}
-          >
+          <Card key={p.title} variant="flat" style={{ flexDirection: 'row', gap: spacing.md, alignItems: 'center' }}>
             <IconCircle icon={p.icon} color={p.color} />
             <View style={{ flex: 1, gap: 2 }}>
               <Text variant="heading">{p.title}</Text>
@@ -77,14 +65,14 @@ export default function Welcome() {
                 {p.body}
               </Text>
             </View>
-          </View>
+          </Card>
         ))}
-      </View>
+      </FadeInView>
 
-      <View style={{ gap: spacing.sm }}>
+      <FadeInView delay={140} style={{ gap: spacing.sm }}>
         <DemoBanner />
         <Button
-          title="Crear cuenta y configurar perfil"
+          title={t('welcomeCreateAccount')}
           icon="person-add-outline"
           fullWidth
           onPress={() => {
@@ -93,20 +81,20 @@ export default function Welcome() {
           }}
         />
         <Button
-          title="Ya tengo cuenta (Ingresar con código)"
+          title={t('welcomeAlreadyAccount')}
           variant="secondary"
           icon="mail-outline"
           fullWidth
           onPress={() => router.push({ pathname: '/sign-in', params: { mode: 'login' } })}
         />
         <Button
-          title="Explorar directo como Sofía (Demo rápida)"
+          title={t('welcomeExploreDemo')}
           variant="ghost"
           icon="compass-outline"
           fullWidth
           onPress={() => router.replace('/(tabs)')}
         />
-      </View>
+      </FadeInView>
     </Screen>
   );
 }

@@ -4,10 +4,10 @@
  * as well as in automated CI (`npm test`).
  */
 import { CATEGORIES, NEIGHBORHOODS, SKILLS } from '../domain/catalog';
-import { mockRepository } from '../services/mockRepository';
+import { mockRepository, SAFETY_POLICY_CONSTANTS } from '../services/mockRepository';
 import { config } from './config';
 import { formatSessionDate } from './dates';
-import { formatARS, formatCredits, formatPayment } from './format';
+import { formatCredits } from './format';
 import { getActiveLocale, setActiveLocale, t } from './i18n';
 
 export interface PilotAuditCheck {
@@ -32,51 +32,83 @@ export function runPilotReadinessAudit(params: {
 }): PilotAuditSummary {
   const sampleUtc = '2026-11-10T22:00:00.000Z';
   const formattedBsAs = formatSessionDate(sampleUtc);
-  const formattedCr = formatCredits(1.5);
-  const formattedMoney = formatARS(800000);
+  const formattedEsOne = formatCredits(1, 'es-AR');
+  const formattedEsTwo = formatCredits(2, 'es-AR');
+  const formattedEnOne = formatCredits(1, 'en');
+  const formattedEnTwo = formatCredits(2, 'en');
 
   const checks: PilotAuditCheck[] = [
     {
       id: 'entity-separation',
       category: 'architecture',
-      title: 'Separación estricta de 4 entidades (Skill, UserSkill, Activity, Session)',
-      passed: CATEGORIES.length >= 7 && SKILLS.length >= 10 && NEIGHBORHOODS.length === 3,
-      detail: `${CATEGORIES.length} categorías, ${SKILLS.length} habilidades y ${NEIGHBORHOODS.length} zonas (${NEIGHBORHOODS.map((n) => n.name).join(', ')})`,
+      title: t('auditCheck1Title'),
+      passed:
+        CATEGORIES.length === 7 &&
+        SKILLS.length >= 32 &&
+        NEIGHBORHOODS.length === 3 &&
+        NEIGHBORHOODS.some((n) => n.id === 'n-santo-tomas' && n.isActive) &&
+        NEIGHBORHOODS.some((n) => n.id === 'n-pilar' && !n.isActive),
+      detail: t('auditCheck1Detail', {
+        categories: CATEGORIES.length,
+        skills: SKILLS.length,
+        neighborhoods: NEIGHBORHOODS.length,
+        names: NEIGHBORHOODS.map((n) => n.name).join(', '),
+      }),
     },
     {
-      id: 'flexible-payment-modes',
+      id: 'integer-non-cashable-credits',
       category: 'economy',
-      title: 'Coexistencia de 3 modalidades (Solo créditos, Solo ARS, Mixto) sin paridad fija',
-      passed: formattedCr.includes('créditos') && formattedMoney.includes('$'),
-      detail: `Formato verificado: ${formattedCr} · ${formattedMoney} en circuitos separados`,
+      title: t('auditCheck2Title'),
+      passed:
+        SAFETY_POLICY_CONSTANTS.maxBalance === 20 &&
+        formattedEsOne === '1 crédito' &&
+        formattedEsTwo === '2 créditos' &&
+        formattedEnOne === '1 credit' &&
+        formattedEnTwo === '2 credits',
+      detail: t('auditCheck2Detail', {
+        esOne: formattedEsOne,
+        enOne: formattedEnOne,
+      }),
     },
     {
       id: 'double-entry-invariants',
       category: 'economy',
-      title: 'Libro mayor cerrado por partida doble y custodia (Escrow)',
+      title: t('auditCheck3Title'),
       passed: params.ledgerHealthy && params.passedInvariants === params.invariantCount,
-      detail: `${params.passedInvariants}/${params.invariantCount} invariantes contables verificadas en tiempo real`,
+      detail: t('auditCheck3Detail', {
+        passed: params.passedInvariants,
+        total: params.invariantCount,
+      }),
     },
     {
       id: 'qr-and-dispute-protection',
       category: 'trust',
-      title: 'Doble QR dinámico (90 s) y ventana de 48 h sin penalidades automáticas',
-      passed: true,
-      detail: 'Check-in + Check-out requeridos para liberar custodia; objeciones por fuerza mayor auditadas',
+      title: t('auditCheck4Title'),
+      passed:
+        SAFETY_POLICY_CONSTANTS.qrTokenTtlSeconds === 90 &&
+        SAFETY_POLICY_CONSTANTS.objectionWindowHours === 48 &&
+        SAFETY_POLICY_CONSTANTS.cancellationDeadlineHours === 24,
+      detail: t('auditCheck4Detail'),
     },
     {
       id: 'privacy-and-age-gate',
       category: 'privacy',
-      title: 'Privacidad barrial (sin domicilios privados) y elegibilidad +18',
-      passed: !config.supabaseAnonKey.includes('service_role'),
-      detail: 'Solo clave pública/anon en cliente; ubicación general y puntos de encuentro públicos',
+      title: t('auditCheck5Title'),
+      passed:
+        !config.supabaseAnonKey.includes('service_role') &&
+        SAFETY_POLICY_CONSTANTS.minPilotAge === 18 &&
+        SAFETY_POLICY_CONSTANTS.maxBalance === 20,
+      detail: t('auditCheck5Detail'),
     },
     {
       id: 'timezone-and-i18n',
       category: 'i18n',
-      title: 'Zona horaria America/Argentina/Buenos_Aires y soporte bilingüe (es-AR / en)',
+      title: t('auditCheck6Title'),
       passed: config.timeZone === 'America/Argentina/Buenos_Aires' && formattedBsAs.includes('19:00'),
-      detail: `UTC 22:00 → ${formattedBsAs} (${config.timeZone})`,
+      detail: t('auditCheck6Detail', {
+        formatted: formattedBsAs,
+        tz: config.timeZone,
+      }),
     },
   ];
 
@@ -101,54 +133,92 @@ function assertCondition(condition: boolean, message: string): void {
   }
 }
 
+async function expectRejects(fn: () => Promise<unknown>, message: string): Promise<void> {
+  let rejected = false;
+  try {
+    await fn();
+  } catch {
+    rejected = true;
+  }
+  assertCondition(rejected, message);
+}
+
 export async function runEndToEndVerificationSuite(): Promise<E2ETestCaseResult[]> {
   const results: E2ETestCaseResult[] = [];
 
-  // 1. Entity separation
+  // 1. Entity separation & neighborhood gate
   const me = await mockRepository.getProfile('u-me');
   assertCondition(!!me, 'Current user profile must exist');
   const offers = me!.skills.filter((s) => s.kind === 'offers');
   const wants = me!.skills.filter((s) => s.kind === 'wants');
   const myActivities = await mockRepository.listActivitiesByInstructor('u-me');
+  const neighborhoods = await mockRepository.listNeighborhoods();
   assertCondition(
-    CATEGORIES.length >= 7 && SKILLS.length >= 10 && offers.length > 0 && wants.length > 0 && myActivities.length >= 2,
-    'Strict separation between Catalog Skills, UserSkills, and Activities',
+    CATEGORIES.length === 7 &&
+      SKILLS.length >= 32 &&
+      offers.length > 0 &&
+      wants.length > 0 &&
+      myActivities.length >= 2 &&
+      neighborhoods.some((n) => n.id === 'n-santo-tomas' && n.isActive) &&
+      neighborhoods.some((n) => n.id === 'n-pilar' && !n.isActive),
+    'Strict separation between Catalog Skills (>=32 across 7 categories), UserSkills, Activities, and active Santo Tomás neighborhood',
+  );
+  await expectRejects(
+    () => mockRepository.verifyNeighborhoodAccess('u-me', { neighborhoodId: 'n-pilar', accessCode: '0000' }),
+    'Inactive neighborhood n-pilar must be rejected',
   );
   results.push({
-    name: '1. Separación de 4 entidades (Skill, UserSkill, Activity, Session)',
+    name: t('e2eCheck1Name'),
     passed: true,
-    detail: `${offers.length} habilidades enseñadas, ${wants.length} buscadas y ${myActivities.length} actividades publicadas`,
+    detail: t('e2eCheck1Detail', {
+      offers: offers.length,
+      wants: wants.length,
+      activities: myActivities.length,
+    }),
   });
 
-  // 2. Flexible payment arrangements
+  // 2. Integer-only non-cashable credits (1h = 1 credit) & MAX_BALANCE = 20
   const all = await mockRepository.listActivities({});
-  const modes = new Set(all.map((a) => a.payment.mode));
-  const creditsSummary = formatPayment({ mode: 'credits', creditAmount: 1, currency: 'ARS' });
-  const moneySummary = formatPayment({ mode: 'money', moneyAmountCents: 800_000, currency: 'ARS' });
-  const mixedSummary = formatPayment({
-    mode: 'mixed',
-    creditAmount: 1,
-    moneyAmountCents: 200_000,
-    currency: 'ARS',
-  });
+  const allPositiveIntegers =
+    all.length > 0 && all.every((a) => Number.isInteger(a.creditAmount) && a.creditAmount >= 1);
   assertCondition(
-    modes.has('credits') &&
-      modes.has('money') &&
-      modes.has('mixed') &&
-      creditsSummary === formatCredits(1) &&
-      moneySummary === formatARS(800_000) &&
-      mixedSummary.includes('1 crédito') &&
-      mixedSummary.includes('$'),
-    'All three payment modes coexist without a fixed conversion rate',
+    allPositiveIntegers &&
+      SAFETY_POLICY_CONSTANTS.maxBalance === 20 &&
+      formatCredits(1, 'es-AR') === '1 crédito' &&
+      formatCredits(2, 'es-AR') === '2 créditos' &&
+      formatCredits(1, 'en') === '1 credit' &&
+      formatCredits(2, 'en') === '2 credits',
+    'All activities must use integer credits >= 1 with MAX_BALANCE === 20 and no decimals',
   );
+
+  for (const invalidAmount of [1.5, 0, -1]) {
+    await expectRejects(
+      () =>
+        mockRepository.upsertActivity('u-me', {
+          skillId: 's-piano',
+          title: 'Clase de prueba inválida',
+          description: 'Validación de créditos enteros únicamente en el repositorio.',
+          durationMin: 60,
+          format: 'in_person',
+          meetingArea: 'Plaza de Santo Tomás',
+          requirements: 'Ninguno',
+          availabilitySummary: 'Sábados 10 h',
+          creditAmount: invalidAmount,
+          status: 'published',
+        }),
+      `upsertActivity must reject invalid creditAmount=${invalidAmount}`,
+    );
+  }
+
   results.push({
-    name: '2. Tres acuerdos de pago flexibles (créditos, ARS y mixto)',
+    name: t('e2eCheck2Name'),
     passed: true,
-    detail: `${creditsSummary} · ${moneySummary} · ${mixedSummary}`,
+    detail: t('e2eCheck2Detail', { count: all.length }),
   });
 
   // 3. Double-entry credit ledger & timely cancellation
   const beforeWallet = await mockRepository.getWallet('u-me');
+  assertCondition(beforeWallet.maxBalance === 20, 'Wallet maxBalance cap must be 20');
   const session = await mockRepository.requestSession('u-me', {
     activityId: 'a-math',
     startsAt: '2026-11-28T21:00:00.000Z',
@@ -156,9 +226,11 @@ export async function runEndToEndVerificationSuite(): Promise<E2ETestCaseResult[
   });
   const afterHoldWallet = await mockRepository.getWallet('u-me');
   assertCondition(
-    afterHoldWallet.available === +(beforeWallet.available - 1).toFixed(2) &&
-      afterHoldWallet.heldInEscrow === +(beforeWallet.heldInEscrow + 1).toFixed(2),
-    'Escrow reservation holds 1 credit',
+    Number.isInteger(afterHoldWallet.available) &&
+      Number.isInteger(afterHoldWallet.heldInEscrow) &&
+      afterHoldWallet.available === beforeWallet.available - 1 &&
+      afterHoldWallet.heldInEscrow === beforeWallet.heldInEscrow + 1,
+    'Escrow reservation holds 1 integer credit',
   );
   const cancelResult = await mockRepository.cancelSession('u-me', {
     sessionId: session.id,
@@ -171,9 +243,9 @@ export async function runEndToEndVerificationSuite(): Promise<E2ETestCaseResult[
     'Timely cancellation (>24h) refunds 100% from escrow',
   );
   results.push({
-    name: '3. Custodia por partida doble y reintegro inmediato (>24 h)',
+    name: t('e2eCheck3Name'),
     passed: true,
-    detail: `Reserva y reintegro verificados (${formatCredits(afterRefundWallet.available)} disponibles)`,
+    detail: t('e2eCheck3Detail', { available: formatCredits(afterRefundWallet.available) }),
   });
 
   // 4. Late cancellation (<24h) 48h force-majeure window & moderator dispute resolution
@@ -204,10 +276,26 @@ export async function runEndToEndVerificationSuite(): Promise<E2ETestCaseResult[
     resolutionNote: 'Fuerza mayor climática verificada: reintegro del 100% al estudiante.',
   });
   assertCondition(resolved.status === 'resolved_refund', 'Moderator resolves dispute with 100% refund');
+  await expectRejects(
+    () =>
+      mockRepository.submitCancellationObjection('u-me', {
+        sessionId: 'ses-english-diego',
+        reason: 'Intento de reabrir sesión ya completada',
+      }),
+    'Cannot reopen a completed session via submitCancellationObjection',
+  );
+  await expectRejects(
+    () =>
+      mockRepository.submitCancellationObjection('u-me', {
+        sessionId: lateSession.id,
+        reason: 'Intento de reabrir sesión ya resuelta',
+      }),
+    'Cannot reopen a resolved session via submitCancellationObjection',
+  );
   results.push({
-    name: '4. Ventana de 48 h por fuerza mayor y resolución de disputa sin penalidad',
+    name: t('e2eCheck4Name'),
     passed: true,
-    detail: `Disputa ${resolved.id} resuelta con reintegro del 100 %`,
+    detail: t('e2eCheck4Detail', { id: resolved.id }),
   });
 
   // 5. Two-stage dynamic QR verification (check_in + check_out) & verified review
@@ -216,6 +304,24 @@ export async function runEndToEndVerificationSuite(): Promise<E2ETestCaseResult[
     sessionId: 'ses-piano-camila',
     phase: 'check_in',
   });
+  await expectRejects(
+    () =>
+      mockRepository.redeemSessionToken('u-camila', {
+        sessionId: 'ses-piano-camila',
+        phase: 'check_in',
+        code: 'ZZZZZZ',
+      }),
+    'Bogus QR code must be rejected',
+  );
+  await expectRejects(
+    () =>
+      mockRepository.redeemSessionToken('u-me', {
+        sessionId: 'ses-piano-camila',
+        phase: 'check_in',
+        code: checkInToken.code,
+      }),
+    'Issuer cannot self-redeem own QR code',
+  );
   const afterCheckIn = await mockRepository.redeemSessionToken('u-camila', {
     sessionId: 'ses-piano-camila',
     phase: 'check_in',
@@ -224,6 +330,15 @@ export async function runEndToEndVerificationSuite(): Promise<E2ETestCaseResult[
   assertCondition(
     afterCheckIn.session.state === 'in_progress' && afterCheckIn.releasedCredits === 0,
     'Check-in transitions to in_progress without premature credit release',
+  );
+  await expectRejects(
+    () =>
+      mockRepository.redeemSessionToken('u-camila', {
+        sessionId: 'ses-piano-camila',
+        phase: 'check_in',
+        code: checkInToken.code,
+      }),
+    'Single-use QR token replay must be rejected',
   );
   const checkOutToken = await mockRepository.issueSessionToken('u-me', {
     sessionId: 'ses-piano-camila',
@@ -238,8 +353,18 @@ export async function runEndToEndVerificationSuite(): Promise<E2ETestCaseResult[
   assertCondition(
     afterCheckOut.session.state === 'completed' &&
       afterCheckOut.releasedCredits === 1 &&
-      walletAfterQr.available === +(walletBeforeQr.available + 1).toFixed(2),
-    'Check-out completes session and atomically releases 1 credit to instructor',
+      Number.isInteger(walletAfterQr.available) &&
+      walletAfterQr.available === walletBeforeQr.available + 1,
+    'Check-out completes session and atomically releases 1 integer credit to instructor',
+  );
+  await expectRejects(
+    () =>
+      mockRepository.submitReview('u-me', {
+        sessionId: 'ses-karate',
+        rating: 5,
+        comment: 'No debería permitir reseña en sesión sin completar.',
+      }),
+    'Reviews on non-completed sessions must be rejected',
   );
   const review = await mockRepository.submitReview('u-me', {
     sessionId: 'ses-piano-camila',
@@ -247,13 +372,80 @@ export async function runEndToEndVerificationSuite(): Promise<E2ETestCaseResult[
     comment: 'Camila aprendió su primera melodía completa en la primera clase.',
   });
   assertCondition(review.rating === 5, 'Verified review recorded for completed session');
+  await expectRejects(
+    () =>
+      mockRepository.submitReview('u-me', {
+        sessionId: 'ses-piano-camila',
+        rating: 4,
+        comment: 'Intento de reseña duplicada para la misma sesión.',
+      }),
+    'Duplicate reviews for the same session must be rejected',
+  );
   results.push({
-    name: '5. Verificación QR en 2 etapas (90 s), liberación atómica y reseña verificada',
+    name: t('e2eCheck5Name'),
     passed: true,
-    detail: `Check-in + Check-out OK · +1 crédito liberado · Reseña 5★ registrada`,
+    detail: t('e2eCheck5Detail'),
   });
 
-  // 6. Safety blocking, i18n, and ledger invariants
+  // 6. 18+ age gate, public meeting points, safety blocking, i18n, and ledger invariants
+  const currentYear = new Date().getUTCFullYear();
+  await expectRejects(
+    () =>
+      mockRepository.submitEligibility('u-me', {
+        birthYear: 1996,
+        birthMonth: 2,
+        birthDay: 30,
+        acceptedSafetyRules: true,
+      }),
+    'Invalid calendar date (1996-02-30) must be rejected',
+  );
+  const uncheckedRules = await mockRepository.submitEligibility('u-me', {
+    birthYear: currentYear - 25,
+    birthMonth: 1,
+    birthDay: 15,
+    acceptedSafetyRules: false,
+  });
+  assertCondition(!uncheckedRules.eligible && uncheckedRules.status === 'pending_eligibility', 'Unchecked safety rules rejected');
+  const under13 = await mockRepository.submitEligibility('u-me', {
+    birthYear: currentYear - 10,
+    birthMonth: 1,
+    birthDay: 15,
+    acceptedSafetyRules: true,
+  });
+  assertCondition(!under13.eligible && under13.status === 'restricted', 'Under 13 rejected');
+  const minor15 = await mockRepository.submitEligibility('u-me', {
+    birthYear: currentYear - 15,
+    birthMonth: 1,
+    birthDay: 15,
+    acceptedSafetyRules: true,
+    guardianEmail: 'tutor@ejemplo.com',
+  });
+  assertCondition(!minor15.eligible && minor15.status === 'restricted', '13-17 restricted in pilot');
+  const adult = await mockRepository.submitEligibility('u-me', {
+    birthYear: currentYear - 25,
+    birthMonth: 1,
+    birthDay: 15,
+    acceptedSafetyRules: true,
+  });
+  assertCondition(adult.eligible && adult.status === 'active', '18+ restores active status');
+
+  await expectRejects(
+    () =>
+      mockRepository.upsertActivity('u-me', {
+        skillId: 's-piano',
+        title: 'Clase privada en domicilio',
+        description: 'Esta actividad debe rechazarse por exponer domicilio privado.',
+        durationMin: 60,
+        format: 'in_person',
+        meetingArea: 'Mi casa en calle falsa 123',
+        requirements: 'Ninguno',
+        availabilitySummary: 'Sábados 10 h',
+        creditAmount: 1,
+        status: 'published',
+      }),
+    'Private home address in meetingArea must be rejected',
+  );
+
   await mockRepository.reportOrBlockUser('u-me', {
     targetUserId: 'u-rosa',
     reason: 'Prueba de bloqueo preventivo',
@@ -264,17 +456,22 @@ export async function runEndToEndVerificationSuite(): Promise<E2ETestCaseResult[
     !visibleActivities.some((a) => a.instructorId === 'u-rosa'),
     'Blocked user activities are hidden from discovery',
   );
-  assertCondition(getActiveLocale() === 'es-AR' && t('communityTagline').includes('enseñar'), 'es-AR active');
-  setActiveLocale('en');
-  assertCondition(t('communityTagline').includes('teach'), 'English translation active');
-  setActiveLocale('es-AR');
+  const prevLocale = getActiveLocale();
+  try {
+    setActiveLocale('es-AR');
+    assertCondition(t('communityTagline').includes('enseñar'), 'es-AR active');
+    setActiveLocale('en');
+    assertCondition(t('communityTagline').includes('teach'), 'English translation active');
+  } finally {
+    setActiveLocale(prevLocale);
+  }
 
   const finalIntegrity = await mockRepository.getLedgerIntegrity('u-me');
   assertCondition(finalIntegrity.healthy, 'All 5 double-entry invariants remain healthy after full E2E run');
   results.push({
-    name: '6. Bloqueo de seguridad, bilingüismo (es-AR / en) y 5/5 invariantes contables',
+    name: t('e2eCheck6Name'),
     passed: true,
-    detail: 'Usuario bloqueado filtrado e integridad del libro mayor 5/5 OK',
+    detail: t('e2eCheck6Detail'),
   });
 
   return results;

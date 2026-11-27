@@ -1,8 +1,12 @@
 import { Stack } from 'expo-router';
 
-import { colors } from '../../ui/theme';
+import { useI18n } from '../../lib/i18n';
+import { useTheme } from '../../ui/theme';
 
 export default function OnboardingLayout() {
+  const { colors } = useTheme();
+  const { t } = useI18n();
+
   return (
     <Stack
       screenOptions={{
@@ -14,9 +18,10 @@ export default function OnboardingLayout() {
         contentStyle: { backgroundColor: colors.bg },
       }}
     >
-      <Stack.Screen name="eligibility" options={{ title: 'Paso 1 de 3 · Elegibilidad' }} />
-      <Stack.Screen name="profile" options={{ title: 'Paso 2 de 3 · Tu perfil' }} />
-      <Stack.Screen name="skills" options={{ title: 'Paso 3 de 3 · Tus habilidades' }} />
+      <Stack.Screen name="eligibility" options={{ title: t('navOnboardStep1') }} />
+      <Stack.Screen name="neighborhood" options={{ title: t('navOnboardStep2') }} />
+      <Stack.Screen name="profile" options={{ title: t('navOnboardStep3') }} />
+      <Stack.Screen name="skills" options={{ title: t('navOnboardStep4') }} />
     </Stack>
   );
 }

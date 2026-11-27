@@ -1,37 +1,44 @@
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { TextInput, View } from 'react-native';
 
 import { formatShortDate } from '../lib/dates';
 import { formatCredits } from '../lib/format';
-import { profiles } from '../mocks/data';
+import { useI18n } from '../lib/i18n';
 import {
   useCurrentUserId,
   useDisputes,
+  useProfiles,
   useResolveDispute,
   useResolveSafetyReport,
   useSafetyReports,
 } from '../services/queries';
 import { DemoBanner, EmptyState, LoadingState, Screen, SectionHeader } from '../ui/layout';
 import { Badge, Button, Card, Text } from '../ui/primitives';
-import { colors, radius, spacing } from '../ui/theme';
-
-const profileMap = new Map(profiles.map((p) => [p.id, p]));
+import { radius, spacing, useTheme } from '../ui/theme';
 
 export default function AdminModerationScreen() {
+  const { colors } = useTheme();
+  const { locale, t } = useI18n();
   const { data: userId } = useCurrentUserId();
   const disputes = useDisputes();
   const reports = useSafetyReports();
+  const allProfiles = useProfiles();
   const resolveDispute = useResolveDispute(userId);
   const resolveReport = useResolveSafetyReport(userId);
 
   const [notesByDispute, setNotesByDispute] = useState<Record<string, string>>({});
   const [bannerMsg, setBannerMsg] = useState<string | null>(null);
 
+  const profileMap = useMemo(
+    () => new Map((allProfiles.data ?? []).map((p) => [p.id, p])),
+    [allProfiles.data],
+  );
+
   if (disputes.isLoading || reports.isLoading) {
     return (
       <Screen>
-        <LoadingState label="Cargando cola de moderación y disputas…" />
+        <LoadingState label={t('adminLoading')} />
       </Screen>
     );
   }
@@ -47,35 +54,30 @@ export default function AdminModerationScreen() {
       onRefresh={() => {
         disputes.refetch();
         reports.refetch();
+        allProfiles.refetch();
       }}
     >
       <DemoBanner compact />
 
-      <Card style={{ backgroundColor: colors.surfaceAlt, gap: spacing.sm }}>
+      <Card variant="tinted" style={{ gap: spacing.sm }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }}>
-          <Badge
-            label="PANEL DE MODERACIÓN Y CONFIANZA"
-            fg={colors.primary}
-            bg={colors.primarySoft}
-            icon="shield-checkmark-outline"
-          />
+          <Badge label={t('adminBadge')} fg={colors.primary} bg={colors.primarySoft} icon="shield-checkmark-outline" />
           <Text variant="caption" color={colors.textMuted}>
-            Rol: Moderador comunitario
+            {t('adminRoleLabel')}
           </Text>
         </View>
-        <Text variant="bodyStrong">Sin penalizaciones irreversibles automáticas</Text>
+        <Text variant="bodyStrong">{t('adminTitle')}</Text>
         <Text variant="caption" color={colors.textMuted}>
-          Toda objeción por fuerza mayor dentro de las 48 h o sesión en disputa congela los créditos en custodia
-          (escrow) hasta que un moderador revise el caso y registre una resolución auditada.
+          {t('adminBody')}
         </Text>
-        <View style={{ flexDirection: 'row', gap: spacing.md, paddingTop: spacing.xs }}>
+        <View style={{ flexDirection: 'row', gap: spacing.md, paddingTop: spacing.xs, flexWrap: 'wrap' }}>
           <Badge
-            label={`${openDisputes} disputas abiertas`}
+            label={t('adminOpenDisputesCount', { count: openDisputes })}
             fg={openDisputes > 0 ? colors.warning : colors.primary}
             bg={openDisputes > 0 ? colors.warningSoft : colors.primarySoft}
           />
           <Badge
-            label={`${openReports} reportes de seguridad`}
+            label={t('adminOpenReportsCount', { count: openReports })}
             fg={openReports > 0 ? colors.danger : colors.textMuted}
             bg={openReports > 0 ? colors.dangerSoft : colors.surface}
           />
@@ -83,33 +85,28 @@ export default function AdminModerationScreen() {
       </Card>
 
       {bannerMsg ? (
-        <Card style={{ backgroundColor: colors.primarySoft, borderColor: colors.primary }}>
+        <Card variant="flat" style={{ backgroundColor: colors.primarySoft, borderColor: colors.primary }}>
           <Text variant="caption" color={colors.primary} style={{ fontWeight: '700' }}>
-            ✓ {bannerMsg}
+            {bannerMsg}
           </Text>
         </Card>
       ) : null}
 
       {/* Disputes section */}
       <View style={{ gap: spacing.md }}>
-        <SectionHeader
-          title="Disputas y objeciones de fuerza mayor"
-          subtitle="Resolvé liberando al instructor, reembolsando al estudiante o dividiendo (50/50)"
-        />
+        <SectionHeader title={t('adminDisputesTitle')} subtitle={t('adminDisputesSubtitle')} />
         {disputeList.length === 0 ? (
           <EmptyState
             icon="checkmark-done-circle-outline"
-            title="Sin disputas registradas"
-            message="Todas las sesiones y cancelaciones están al día."
+            title={t('adminNoDisputesTitle')}
+            message={t('adminNoDisputesMsg')}
           />
         ) : (
           disputeList.map((d) => {
             const learner = profileMap.get(d.learnerId);
             const instructor = profileMap.get(d.instructorId);
             const isOpen = d.status === 'open';
-            const noteVal =
-              notesByDispute[d.id] ??
-              'Tras revisar el descargo y el historial comunitario, se aplica esta resolución equitativa.';
+            const noteVal = notesByDispute[d.id] ?? t('adminDefaultNote');
 
             return (
               <Card
@@ -119,42 +116,43 @@ export default function AdminModerationScreen() {
                   borderColor: isOpen ? colors.warning : colors.border,
                 }}
               >
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.sm }}>
                   <Badge
                     label={
                       d.status === 'open'
-                        ? 'ABIERTA · CRÉDITOS RETENIDOS'
+                        ? t('adminDisputeOpen')
                         : d.status === 'resolved_refund'
-                          ? 'RESUELTA · REEMBOLSO 100%'
-                          : d.status === 'resolved_release'
-                            ? 'RESUELTA · LIBERADO AL INSTRUCTOR'
-                            : 'RESUELTA · DIVISIÓN EQUITATIVA'
+                          ? t('adminDisputeRefunded')
+                          : t('adminDisputeReleased')
                     }
                     fg={isOpen ? colors.warning : colors.primary}
                     bg={isOpen ? colors.warningSoft : colors.primarySoft}
                     icon={isOpen ? 'alert-circle-outline' : 'checkmark-circle-outline'}
                   />
                   <Text variant="caption" color={colors.credit} style={{ fontWeight: '700' }}>
-                    {formatCredits(d.creditAmount)} en custodia
+                    {t('adminInEscrow', { credits: formatCredits(d.creditAmount, locale) })}
                   </Text>
                 </View>
 
                 <Text variant="bodyStrong">{d.activityTitle}</Text>
                 <Text variant="caption" color={colors.textMuted}>
-                  Estudiante: {learner?.displayName ?? d.learnerId} · Instructor:{' '}
-                  {instructor?.displayName ?? d.instructorId} · Abierta el {formatShortDate(d.createdAt)}
+                  {t('adminPartiesMeta', {
+                    learner: learner?.displayName ?? d.learnerId,
+                    instructor: instructor?.displayName ?? d.instructorId,
+                    date: formatShortDate(d.createdAt, locale),
+                  })}
                 </Text>
 
                 <View
                   style={{
-                    backgroundColor: colors.surfaceAlt,
-                    borderRadius: radius.md,
-                    padding: spacing.sm,
+                    paddingTop: spacing.sm,
+                    borderTopWidth: 1,
+                    borderTopColor: colors.border,
                     gap: 4,
                   }}
                 >
                   <Text variant="caption" color={colors.textMuted}>
-                    Motivo / descargo presentado:
+                    {t('adminReasonLabel')}
                   </Text>
                   <Text variant="caption" color={colors.text}>
                     “{d.reason}”
@@ -164,7 +162,7 @@ export default function AdminModerationScreen() {
                 {isOpen ? (
                   <View style={{ gap: spacing.sm, paddingTop: spacing.xs }}>
                     <Text variant="caption" color={colors.textMuted}>
-                      Nota de resolución administrativa (visible para ambas partes):
+                      {t('adminNoteLabel')}
                     </Text>
                     <TextInput
                       value={noteVal}
@@ -182,7 +180,7 @@ export default function AdminModerationScreen() {
                     />
                     <View style={{ gap: spacing.xs }}>
                       <Button
-                        title="Reembolsar 100% al estudiante (fuerza mayor)"
+                        title={t('adminRefundBtn')}
                         variant="primary"
                         icon="arrow-undo-outline"
                         fullWidth
@@ -195,14 +193,13 @@ export default function AdminModerationScreen() {
                               resolutionNote: noteVal,
                             },
                             {
-                              onSuccess: () =>
-                                setBannerMsg(`Disputa de "${d.activityTitle}" resuelta con reembolso al estudiante.`),
+                              onSuccess: () => setBannerMsg(t('adminDisputeRefundBanner', { title: d.activityTitle })),
                             },
                           )
                         }
                       />
                       <Button
-                        title="Liberar 100% al instructor"
+                        title={t('adminReleaseBtn')}
                         variant="secondary"
                         icon="checkmark-done-outline"
                         fullWidth
@@ -215,28 +212,7 @@ export default function AdminModerationScreen() {
                               resolutionNote: noteVal,
                             },
                             {
-                              onSuccess: () =>
-                                setBannerMsg(`Disputa de "${d.activityTitle}" resuelta liberando al instructor.`),
-                            },
-                          )
-                        }
-                      />
-                      <Button
-                        title="Dividir créditos (50% instructor / 50% reembolso)"
-                        variant="secondary"
-                        icon="git-branch-outline"
-                        fullWidth
-                        disabled={resolveDispute.isPending}
-                        onPress={() =>
-                          resolveDispute.mutate(
-                            {
-                              disputeId: d.id,
-                              resolution: 'resolved_split',
-                              resolutionNote: noteVal,
-                            },
-                            {
-                              onSuccess: () =>
-                                setBannerMsg(`Disputa de "${d.activityTitle}" resuelta con división equitativa.`),
+                              onSuccess: () => setBannerMsg(t('adminDisputeReleaseBanner', { title: d.activityTitle })),
                             },
                           )
                         }
@@ -246,13 +222,13 @@ export default function AdminModerationScreen() {
                 ) : (
                   <View style={{ gap: 4 }}>
                     <Text variant="caption" color={colors.primary} style={{ fontWeight: '600' }}>
-                      Resolución: {d.resolutionNote}
+                      {t('adminResolutionLabel', { note: d.resolutionNote ?? '' })}
                     </Text>
                   </View>
                 )}
 
                 <Button
-                  title="Ver detalle de la sesión"
+                  title={t('adminViewSessionBtn')}
                   variant="ghost"
                   icon="open-outline"
                   onPress={() => router.push({ pathname: '/session/[id]', params: { id: d.sessionId } })}
@@ -265,63 +241,60 @@ export default function AdminModerationScreen() {
 
       {/* Safety reports section */}
       <View style={{ gap: spacing.md }}>
-        <SectionHeader
-          title="Reportes de convivencia y seguridad"
-          subtitle="Reportes enviados desde perfiles de usuarios o sesiones"
-        />
+        <SectionHeader title={t('adminReportsTitle')} subtitle={t('adminReportsSubtitle')} />
         {reportList.map((r) => {
           const reporter = profileMap.get(r.reporterId);
           const target = profileMap.get(r.targetUserId);
           const isOpen = r.status === 'open';
           return (
-            <Card key={r.id} style={{ gap: spacing.sm }}>
+            <Card key={r.id} variant="flat" style={{ gap: spacing.sm }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Badge
                   label={
                     r.status === 'open'
-                      ? 'PENDIENTE DE REVISIÓN'
+                      ? t('adminReportOpen')
                       : r.status === 'reviewed'
-                        ? 'REVISADO · MEDIDA APLICADA'
-                        : 'DESCARTADO'
+                        ? t('adminReportReviewed')
+                        : t('adminReportDismissed')
                   }
                   fg={isOpen ? colors.danger : colors.textMuted}
                   bg={isOpen ? colors.dangerSoft : colors.surfaceAlt}
                   icon="flag-outline"
                 />
                 <Text variant="caption" color={colors.textMuted}>
-                  {formatShortDate(r.createdAt)}
+                  {formatShortDate(r.createdAt, locale)}
                 </Text>
               </View>
               <Text variant="bodyStrong">
-                Perfil reportado: {target?.displayName ?? r.targetUserId}
+                {t('adminReportTarget', { name: target?.displayName ?? r.targetUserId })}
               </Text>
               <Text variant="caption" color={colors.textMuted}>
-                Reportado por: {reporter?.displayName ?? r.reporterId}
+                {t('adminReportBy', { name: reporter?.displayName ?? r.reporterId })}
               </Text>
-              <Text color={colors.text}>Motivo: “{r.reason}”</Text>
+              <Text color={colors.text}>{t('adminReportReason', { reason: r.reason })}</Text>
               {isOpen ? (
                 <View style={{ flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap' }}>
                   <Button
-                    title="Marcar revisado"
+                    title={t('adminMarkReviewedBtn')}
                     variant="primary"
                     icon="checkmark-outline"
                     disabled={resolveReport.isPending}
                     onPress={() =>
                       resolveReport.mutate(
                         { reportId: r.id, status: 'reviewed' },
-                        { onSuccess: () => setBannerMsg('Reporte de seguridad marcado como revisado.') },
+                        { onSuccess: () => setBannerMsg(t('adminReportReviewedBanner')) },
                       )
                     }
                   />
                   <Button
-                    title="Descartar"
+                    title={t('adminDismissBtn')}
                     variant="secondary"
                     icon="close-outline"
                     disabled={resolveReport.isPending}
                     onPress={() =>
                       resolveReport.mutate(
                         { reportId: r.id, status: 'dismissed' },
-                        { onSuccess: () => setBannerMsg('Reporte de seguridad descartado.') },
+                        { onSuccess: () => setBannerMsg(t('adminReportDismissedBanner')) },
                       )
                     }
                   />

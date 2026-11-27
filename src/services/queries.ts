@@ -7,13 +7,14 @@ import type {
   ActivityFilters,
   ActivityUpsertInput,
   AvailabilityUpdateInput,
-  ConfirmMonetaryPaymentInput,
+  CustomSkillInput,
   EligibilitySubmission,
   ID,
   IssueSessionTokenInput,
+  NeighborhoodAccessInput,
+  ProfilePhotoAssetInput,
   ProfileUpdateInput,
   RedeemSessionTokenInput,
-  ReportMonetaryPaymentInput,
   ResolveDisputeInput,
   ResolveReportInput,
   ReviewCreateInput,
@@ -23,14 +24,18 @@ import type {
   SessionResponseInput,
   SubmitCancellationObjectionInput,
 } from '../domain/types';
-import { mockRepository } from './mockRepository';
+import { mockRepository, summarizeAvailability } from './mockRepository';
 import type { Repository } from './repository';
 
+export { summarizeAvailability };
 export const repository: Repository = mockRepository;
 export const isDemoData = repository.kind === 'mock';
 
 export const queryKeys = {
   me: ['me'] as const,
+  skills: ['skills'] as const,
+  neighborhoods: ['neighborhoods'] as const,
+  profiles: ['profiles'] as const,
   profile: (id: ID) => ['profile', id] as const,
   activities: (f: ActivityFilters) => ['activities', f] as const,
   instructorActivities: (id: ID) => ['activities', 'instructor', id] as const,
@@ -40,8 +45,6 @@ export const queryKeys = {
   session: (id: ID) => ['session', id] as const,
   wallet: (id: ID) => ['wallet', id] as const,
   ledgerIntegrity: (id: ID) => ['ledger-integrity', id] as const,
-  monetaryPayments: (id: ID) => ['monetary-payments', id] as const,
-  sessionMonetaryPayment: (sessionId: ID) => ['session-monetary-payment', sessionId] as const,
   reviewsAbout: (id: ID) => ['reviews', id] as const,
   sessionReviews: (sessionId: ID) => ['session-reviews', sessionId] as const,
   notifications: (id: ID) => ['notifications', id] as const,
@@ -52,6 +55,18 @@ export const queryKeys = {
 
 export function useCurrentUserId() {
   return useQuery({ queryKey: queryKeys.me, queryFn: () => repository.getCurrentUserId(), staleTime: Infinity });
+}
+
+export function useSkills() {
+  return useQuery({ queryKey: queryKeys.skills, queryFn: () => repository.listSkills() });
+}
+
+export function useNeighborhoods() {
+  return useQuery({ queryKey: queryKeys.neighborhoods, queryFn: () => repository.listNeighborhoods() });
+}
+
+export function useProfiles() {
+  return useQuery({ queryKey: queryKeys.profiles, queryFn: () => repository.listProfiles() });
 }
 
 export function useProfile(id: ID | undefined) {
@@ -122,22 +137,6 @@ export function useLedgerIntegrity(userId: ID | undefined) {
   });
 }
 
-export function useMonetaryPayments(userId: ID | undefined) {
-  return useQuery({
-    queryKey: queryKeys.monetaryPayments(userId ?? ''),
-    queryFn: () => repository.listMonetaryPayments(userId!),
-    enabled: !!userId,
-  });
-}
-
-export function useSessionMonetaryPayment(sessionId: ID | undefined) {
-  return useQuery({
-    queryKey: queryKeys.sessionMonetaryPayment(sessionId ?? ''),
-    queryFn: () => repository.getMonetaryPaymentBySession(sessionId!),
-    enabled: !!sessionId,
-  });
-}
-
 export function useReviewsAbout(userId: ID | undefined) {
   return useQuery({
     queryKey: queryKeys.reviewsAbout(userId ?? ''),
@@ -203,8 +202,64 @@ export function useUpdateProfile(userId: ID | undefined) {
     onSuccess: () => {
       if (userId) {
         qc.invalidateQueries({ queryKey: queryKeys.profile(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.profiles });
         qc.invalidateQueries({ queryKey: queryKeys.recommendations(userId) });
         qc.invalidateQueries({ queryKey: ['activities'] });
+      }
+    },
+  });
+}
+
+export function useCreateCustomSkill(userId: ID | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CustomSkillInput) => repository.createCustomSkill(userId!, input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.skills });
+      qc.invalidateQueries({ queryKey: ['activities'] });
+    },
+  });
+}
+
+export function useUploadProfilePhoto(userId: ID | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (asset: ProfilePhotoAssetInput) => repository.uploadProfilePhoto(userId!, asset),
+    onSuccess: () => {
+      if (userId) {
+        qc.invalidateQueries({ queryKey: queryKeys.profile(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.profiles });
+        qc.invalidateQueries({ queryKey: queryKeys.recommendations(userId) });
+        qc.invalidateQueries({ queryKey: ['activities'] });
+      }
+    },
+  });
+}
+
+export function useRemoveProfilePhoto(userId: ID | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => repository.removeProfilePhoto(userId!),
+    onSuccess: () => {
+      if (userId) {
+        qc.invalidateQueries({ queryKey: queryKeys.profile(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.profiles });
+        qc.invalidateQueries({ queryKey: queryKeys.recommendations(userId) });
+        qc.invalidateQueries({ queryKey: ['activities'] });
+      }
+    },
+  });
+}
+
+export function useVerifyNeighborhoodAccess(userId: ID | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: NeighborhoodAccessInput) => repository.verifyNeighborhoodAccess(userId!, input),
+    onSuccess: () => {
+      if (userId) {
+        qc.invalidateQueries({ queryKey: queryKeys.profile(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.profiles });
+        qc.invalidateQueries({ queryKey: queryKeys.recommendations(userId) });
       }
     },
   });
@@ -217,6 +272,7 @@ export function useUpdateAvailability(userId: ID | undefined) {
     onSuccess: () => {
       if (userId) {
         qc.invalidateQueries({ queryKey: queryKeys.profile(userId) });
+        qc.invalidateQueries({ queryKey: queryKeys.profiles });
       }
     },
   });
@@ -243,13 +299,11 @@ export function useRequestSession(userId: ID | undefined) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: SessionRequestInput) => repository.requestSession(userId!, input),
-    onSuccess: (session) => {
+    onSuccess: () => {
       if (userId) {
         qc.invalidateQueries({ queryKey: queryKeys.sessions(userId) });
         qc.invalidateQueries({ queryKey: queryKeys.wallet(userId) });
         qc.invalidateQueries({ queryKey: queryKeys.ledgerIntegrity(userId) });
-        qc.invalidateQueries({ queryKey: queryKeys.monetaryPayments(userId) });
-        qc.invalidateQueries({ queryKey: queryKeys.sessionMonetaryPayment(session.id) });
       }
     },
   });
@@ -265,8 +319,6 @@ export function useRespondToSession(userId: ID | undefined) {
         qc.invalidateQueries({ queryKey: queryKeys.sessions(userId) });
         qc.invalidateQueries({ queryKey: queryKeys.wallet(userId) });
         qc.invalidateQueries({ queryKey: queryKeys.ledgerIntegrity(userId) });
-        qc.invalidateQueries({ queryKey: queryKeys.monetaryPayments(userId) });
-        qc.invalidateQueries({ queryKey: queryKeys.sessionMonetaryPayment(session.id) });
       }
     },
   });
@@ -282,8 +334,6 @@ export function useCancelSession(userId: ID | undefined) {
         qc.invalidateQueries({ queryKey: queryKeys.sessions(userId) });
         qc.invalidateQueries({ queryKey: queryKeys.wallet(userId) });
         qc.invalidateQueries({ queryKey: queryKeys.ledgerIntegrity(userId) });
-        qc.invalidateQueries({ queryKey: queryKeys.monetaryPayments(userId) });
-        qc.invalidateQueries({ queryKey: queryKeys.sessionMonetaryPayment(session.id) });
       }
     },
   });
@@ -316,7 +366,11 @@ export function useIssueSessionToken(userId: ID | undefined) {
 export function useRedeemSessionToken(userId: ID | undefined) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: RedeemSessionTokenInput) => repository.redeemSessionToken(userId!, input),
+    mutationFn: (input: RedeemSessionTokenInput & { demoScannerId?: ID }) =>
+      repository.redeemSessionToken(
+        isDemoData && input.demoScannerId ? input.demoScannerId : userId!,
+        { sessionId: input.sessionId, phase: input.phase, code: input.code },
+      ),
     onSuccess: ({ session }) => {
       if (userId) {
         qc.invalidateQueries({ queryKey: queryKeys.session(session.id) });
@@ -376,34 +430,6 @@ export function useResolveSafetyReport(moderatorId: ID | undefined) {
     mutationFn: (input: ResolveReportInput) => repository.resolveSafetyReport(moderatorId!, input),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.safetyReports });
-    },
-  });
-}
-
-export function useReportMonetaryPayment(userId: ID | undefined) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (input: ReportMonetaryPaymentInput) => repository.reportMonetaryPayment(userId!, input),
-    onSuccess: (mp) => {
-      if (userId) {
-        qc.invalidateQueries({ queryKey: queryKeys.monetaryPayments(userId) });
-        qc.invalidateQueries({ queryKey: queryKeys.sessionMonetaryPayment(mp.sessionId) });
-        qc.invalidateQueries({ queryKey: queryKeys.ledgerIntegrity(userId) });
-      }
-    },
-  });
-}
-
-export function useConfirmMonetaryPayment(userId: ID | undefined) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (input: ConfirmMonetaryPaymentInput) => repository.confirmMonetaryPayment(userId!, input),
-    onSuccess: (mp) => {
-      if (userId) {
-        qc.invalidateQueries({ queryKey: queryKeys.monetaryPayments(userId) });
-        qc.invalidateQueries({ queryKey: queryKeys.sessionMonetaryPayment(mp.sessionId) });
-        qc.invalidateQueries({ queryKey: queryKeys.ledgerIntegrity(userId) });
-      }
     },
   });
 }

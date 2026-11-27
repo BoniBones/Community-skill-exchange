@@ -4,38 +4,34 @@ import { Pressable, TextInput, View } from 'react-native';
 
 import { PaymentPill, Stars } from '../../components/activity';
 import { SessionStateBadge } from '../../components/session';
-import type {
-  MonetaryPaymentMethod,
-  SessionVerificationToken,
-  VerificationPhase,
-} from '../../domain/types';
+import type { SessionVerificationToken, VerificationPhase } from '../../domain/types';
 import { formatSessionDate, formatShortDate, formatTime } from '../../lib/dates';
-import { formatCredits, formatMoneyCents } from '../../lib/format';
+import { formatCredits } from '../../lib/format';
+import { useI18n } from '../../lib/i18n';
 import {
+  isDemoData,
   useActivity,
   useCancelSession,
-  useConfirmMonetaryPayment,
   useCurrentUserId,
   useIssueSessionToken,
   useProfile,
   useRedeemSessionToken,
-  useReportMonetaryPayment,
   useRespondToSession,
   useSession,
-  useSessionMonetaryPayment,
   useSessionReviews,
   useSubmitCancellationObjection,
   useSubmitReview,
 } from '../../services/queries';
 import { DemoBanner, ErrorState, InfoRow, LoadingState, Screen } from '../../ui/layout';
 import { Avatar, Badge, Button, Card, Chip, Ionicons, Text } from '../../ui/primitives';
-import { colors, radius, spacing } from '../../ui/theme';
+import { animateLayout, radius, spacing, useTheme } from '../../ui/theme';
 
 /**
  * Pure React Native 9x9 visual QR matrix rendered from the token hash.
  * 100% Expo Go compatible with zero native camera/SVG dependencies required.
  */
 function VisualQrMatrix({ hash }: { hash: string }) {
+  const { colors } = useTheme();
   const size = 9;
   const cells: boolean[][] = [];
   for (let r = 0; r < size; r++) {
@@ -64,7 +60,7 @@ function VisualQrMatrix({ hash }: { hash: string }) {
     <View
       style={{
         padding: 10,
-        backgroundColor: '#FFFFFF',
+        backgroundColor: colors.surface,
         borderRadius: radius.md,
         borderWidth: 2,
         borderColor: colors.text,
@@ -80,7 +76,7 @@ function VisualQrMatrix({ hash }: { hash: string }) {
                 width: 12,
                 height: 12,
                 borderRadius: 2,
-                backgroundColor: filled ? colors.text : '#F3EEE6',
+                backgroundColor: filled ? colors.text : colors.surfaceAlt,
               }}
             />
           ))}
@@ -92,17 +88,16 @@ function VisualQrMatrix({ hash }: { hash: string }) {
 
 export default function SessionDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { colors } = useTheme();
+  const { locale, t } = useI18n();
   const { data: viewerId } = useCurrentUserId();
   const session = useSession(id);
   const activity = useActivity(session.data?.activityId);
-  const monetaryPayment = useSessionMonetaryPayment(id);
   const sessionReviews = useSessionReviews(id);
 
   const respondToSession = useRespondToSession(viewerId);
   const cancelSession = useCancelSession(viewerId);
   const submitObjection = useSubmitCancellationObjection(viewerId);
-  const reportPayment = useReportMonetaryPayment(viewerId);
-  const confirmPayment = useConfirmMonetaryPayment(viewerId);
   const issueToken = useIssueSessionToken(viewerId);
   const redeemToken = useRedeemSessionToken(viewerId);
   const submitReview = useSubmitReview(viewerId);
@@ -123,8 +118,6 @@ export default function SessionDetailScreen() {
   const [simulateLate, setSimulateLate] = useState(false);
 
   const [objectionText, setObjectionText] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<MonetaryPaymentMethod>('mercadopago');
-  const [paymentRef, setPaymentRef] = useState('');
 
   const [reviewRating, setReviewRating] = useState<1 | 2 | 3 | 4 | 5>(5);
   const [reviewComment, setReviewComment] = useState('');
@@ -135,7 +128,7 @@ export default function SessionDetailScreen() {
   if (session.isLoading || activity.isLoading) {
     return (
       <Screen edges={['bottom']}>
-        <LoadingState label="Cargando sesión…" />
+        <LoadingState label={t('sesDetLoading')} />
       </Screen>
     );
   }
@@ -143,20 +136,17 @@ export default function SessionDetailScreen() {
   if (!session.data || !activity.data) {
     return (
       <Screen edges={['bottom']}>
-        <ErrorState message="No encontramos esta sesión." onRetry={() => session.refetch()} />
+        <ErrorState message={t('sesDetNotFound')} onRetry={() => session.refetch()} />
       </Screen>
     );
   }
 
   const s = session.data;
   const a = activity.data;
-  const mp = monetaryPayment.data;
   const teaching = s.instructorId === viewerId;
   const canInstructorRespond = teaching && s.state === 'requested';
   const canCancel = s.state === 'requested' || s.state === 'confirmed';
 
-  const hasCreditsComponent = s.price.mode === 'credits' || s.price.mode === 'mixed';
-  const hasMoneyComponent = s.price.mode === 'money' || s.price.mode === 'mixed';
   const inLateReviewWindow =
     s.cancellationTiming === 'late_review_window' || s.state === 'disputed';
 
@@ -166,29 +156,25 @@ export default function SessionDetailScreen() {
   const myExistingReview = (sessionReviews.data ?? []).find((r) => r.authorId === viewerId);
 
   const creditEscrowLabel = (() => {
-    if (s.state === 'completed') return 'LIBERADO AL INSTRUCTOR (VERIFICADO CON QR EN 2 ETAPAS)';
-    if (s.state === 'declined') return 'REINTEGRADO AL APRENDIZ (SOLICITUD RECHAZADA)';
-    if (s.state === 'resolved') return 'RESUELTO POR MODERACIÓN COMUNITARIA';
-    if (s.state === 'disputed') return 'PROTEGIDO EN CUSTODIA · EN REVISIÓN ADMINISTRATIVA';
+    if (s.state === 'completed') return t('sesDetEscrowCompleted');
+    if (s.state === 'declined') return t('sesDetEscrowDeclined');
+    if (s.state === 'resolved') return t('sesDetEscrowResolved');
+    if (s.state === 'disputed') return t('sesDetEscrowDisputed');
     if (s.state === 'cancelled') {
       return s.cancellationTiming === 'late_review_window'
-        ? 'RETENIDO EN VENTANA DE REVISIÓN (48 H · SIN PENALIDAD AUTOMÁTICA)'
-        : 'REINTEGRADO AL APRENDIZ (> 24 H)';
+        ? t('sesDetEscrowLateCancelled')
+        : t('sesDetEscrowTimelyCancelled');
     }
-    return 'EN CUSTODIA (ESCROW)';
+    return t('sesDetEscrowActive');
   })();
 
   const handleRespond = async (decision: 'confirm' | 'decline') => {
     setErrorBanner(null);
     try {
       const updated = await respondToSession.mutateAsync({ sessionId: s.id, decision });
-      setActionBanner(
-        updated.state === 'confirmed'
-          ? 'Confirmaste la sesión. El encuentro quedó agendado.'
-          : 'Rechazaste la solicitud. Los créditos en custodia fueron reintegrados al aprendiz.',
-      );
+      setActionBanner(updated.state === 'confirmed' ? t('sesDetConfirmedBanner') : t('sesDetDeclinedBanner'));
     } catch (err) {
-      setErrorBanner(err instanceof Error ? err.message : 'No se pudo procesar la respuesta.');
+      setErrorBanner(err instanceof Error ? err.message : t('sesDetRespondErr'));
     }
   };
 
@@ -196,27 +182,33 @@ export default function SessionDetailScreen() {
     setErrorBanner(null);
     try {
       const tok = await issueToken.mutateAsync({ sessionId: s.id, phase });
+      animateLayout();
       setActiveToken(tok);
-      setManualCode(tok.code);
     } catch (err) {
-      setErrorBanner(err instanceof Error ? err.message : 'No se pudo emitir el código QR.');
+      setErrorBanner(err instanceof Error ? err.message : t('sesDetQrIssueErr'));
     }
   };
 
-  const handleRedeemQr = async (phase: VerificationPhase, codeToUse?: string) => {
+  const handleRedeemQr = async (
+    phase: VerificationPhase,
+    codeToUse?: string,
+    simulateCounterpart = false,
+  ) => {
     setErrorBanner(null);
     try {
       const code = (codeToUse ?? manualCode).trim();
       const res = await redeemToken.mutateAsync({
         sessionId: s.id,
         phase,
-        code: code || activeToken?.code || 'DEMO90',
+        code,
+        demoScannerId: simulateCounterpart ? counterpartId : undefined,
       });
+      animateLayout();
       setActiveToken(null);
       setManualCode('');
       setActionBanner(res.message);
     } catch (err) {
-      setErrorBanner(err instanceof Error ? err.message : 'No se pudo validar el código QR.');
+      setErrorBanner(err instanceof Error ? err.message : t('sesDetQrRedeemErr'));
     }
   };
 
@@ -229,9 +221,9 @@ export default function SessionDetailScreen() {
         comment: reviewComment,
       });
       setReviewComment('');
-      setActionBanner('¡Gracias! Tu reseña verificada fue publicada y sumó a la reputación comunitaria.');
+      setActionBanner(t('sesDetReviewPublishedBanner'));
     } catch (err) {
-      setErrorBanner(err instanceof Error ? err.message : 'No se pudo publicar la reseña.');
+      setErrorBanner(err instanceof Error ? err.message : t('sesDetReviewErr'));
     }
   };
 
@@ -240,13 +232,14 @@ export default function SessionDetailScreen() {
     try {
       const res = await cancelSession.mutateAsync({
         sessionId: s.id,
-        reason: cancelReason || 'Imprevisto personal',
+        reason: cancelReason || t('sesDetCancelDefaultReason'),
         simulateLateWindow: !teaching && simulateLate,
       });
       setActionBanner(res.refundMessage);
+      animateLayout();
       setShowCancelBox(false);
     } catch (err) {
-      setErrorBanner(err instanceof Error ? err.message : 'No se pudo cancelar la sesión.');
+      setErrorBanner(err instanceof Error ? err.message : t('sesDetCancelErr'));
     }
   };
 
@@ -258,35 +251,9 @@ export default function SessionDetailScreen() {
         reason: objectionText,
       });
       setObjectionText('');
-      setActionBanner(
-        'Descargo por fuerza mayor registrado. Los créditos permanecen protegidos en custodia hasta la resolución administrativa (sin penalidad automática).',
-      );
+      setActionBanner(t('sesDetObjBanner'));
     } catch (err) {
-      setErrorBanner(err instanceof Error ? err.message : 'No se pudo enviar el descargo.');
-    }
-  };
-
-  const handleReportPayment = async () => {
-    setErrorBanner(null);
-    try {
-      await reportPayment.mutateAsync({
-        sessionId: s.id,
-        method: paymentMethod,
-        externalRef: paymentRef || undefined,
-      });
-      setActionBanner('Informaste el pago en ARS. El instructor podrá confirmar su recepción.');
-    } catch (err) {
-      setErrorBanner(err instanceof Error ? err.message : 'No se pudo informar el pago en ARS.');
-    }
-  };
-
-  const handleConfirmPayment = async () => {
-    setErrorBanner(null);
-    try {
-      await confirmPayment.mutateAsync({ sessionId: s.id });
-      setActionBanner('Confirmaste la recepción del tramo en pesos (ARS).');
-    } catch (err) {
-      setErrorBanner(err instanceof Error ? err.message : 'No se pudo confirmar el pago en ARS.');
+      setErrorBanner(err instanceof Error ? err.message : t('sesDetObjErr'));
     }
   };
 
@@ -296,7 +263,7 @@ export default function SessionDetailScreen() {
 
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.sm }}>
         <Badge
-          label={teaching ? 'ROL: INSTRUCTOR' : 'ROL: APRENDIZ'}
+          label={teaching ? t('sesDetRoleInstructor') : t('sesDetRoleLearner')}
           fg={teaching ? colors.accent : colors.primary}
           bg={teaching ? colors.accentSoft : colors.primarySoft}
           icon={teaching ? 'easel-outline' : 'book-outline'}
@@ -307,7 +274,7 @@ export default function SessionDetailScreen() {
       <Text variant="display">{a.title}</Text>
 
       {actionBanner ? (
-        <Card style={{ backgroundColor: colors.primarySoft, borderColor: colors.primary }}>
+        <Card variant="flat" style={{ backgroundColor: colors.primarySoft, borderColor: colors.primary }}>
           <Text variant="caption" color={colors.primary} style={{ fontWeight: '600' }}>
             {actionBanner}
           </Text>
@@ -315,7 +282,7 @@ export default function SessionDetailScreen() {
       ) : null}
 
       {errorBanner ? (
-        <Card style={{ backgroundColor: colors.dangerSoft, borderColor: colors.danger }}>
+        <Card variant="flat" style={{ backgroundColor: colors.dangerSoft, borderColor: colors.danger }}>
           <Text variant="caption" color={colors.danger} style={{ fontWeight: '600' }}>
             {errorBanner}
           </Text>
@@ -326,195 +293,80 @@ export default function SessionDetailScreen() {
       <Card style={{ gap: spacing.md }}>
         <InfoRow
           icon="calendar-outline"
-          label="Fecha y hora (America/Argentina/Buenos_Aires)"
-          value={`${formatSessionDate(s.startsAt)} a ${formatTime(s.endsAt)}`}
+          label={t('sesDetWhenLabel')}
+          value={t('sesDetWhenRange', {
+            start: formatSessionDate(s.startsAt, locale),
+            end: formatTime(s.endsAt),
+          })}
         />
-        <InfoRow icon="location-outline" label="Punto de encuentro" value={a.meetingArea} />
-        {s.learnerNote ? <InfoRow icon="chatbubble-outline" label="Nota del aprendiz" value={s.learnerNote} /> : null}
+        <InfoRow icon="location-outline" label={t('sesDetMeetingLabel')} value={a.meetingArea} />
+        {s.learnerNote ? <InfoRow icon="chatbubble-outline" label={t('sesDetLearnerNoteLabel')} value={s.learnerNote} /> : null}
         {s.cancellationReason ? (
-          <InfoRow icon="information-circle-outline" label="Motivo de cancelación" value={s.cancellationReason} />
+          <InfoRow icon="information-circle-outline" label={t('sesDetCancelReasonLabel')} value={s.cancellationReason} />
         ) : null}
         <View style={{ gap: 4 }}>
           <Text variant="caption" color={colors.textMuted}>
-            Acuerdo de intercambio (congelado al momento de reservar)
+            {t('sesDetCreditsFrozenLabel')}
           </Text>
-          <PaymentPill payment={s.price} />
+          <PaymentPill creditAmount={s.creditAmount} />
         </View>
       </Card>
 
-      {/* Stage 4: Exchange Economy Breakdown (Separated Credit Escrow + ARS Monetary Tracking) */}
-      <Card style={{ gap: spacing.md, borderColor: colors.border }}>
+      {/* Exchange Economy Breakdown (Flattened Integer Credit Escrow) */}
+      <Card style={{ gap: spacing.md }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
           <Ionicons name="wallet-outline" size={20} color={colors.primary} />
-          <Text variant="heading">Estado del intercambio económico</Text>
+          <Text variant="heading">{t('sesDetEscrowTitle')}</Text>
         </View>
         <Text variant="caption" color={colors.textMuted}>
-          {s.price.mode === 'mixed'
-            ? 'Esta sesión utiliza pago mixto: el tramo en créditos comunitarios y el tramo en pesos (ARS) se gestionan en circuitos contables separados.'
-            : s.price.mode === 'credits'
-              ? 'Esta sesión se intercambia 100% con créditos comunitarios protegidos en custodia (escrow).'
-              : 'Esta sesión se abona 100% en pesos argentinos (ARS) acordados directamente con el instructor.'}
+          {t('sesDetEscrowSubtitle')}
         </Text>
 
-        {/* Credits portion */}
-        {hasCreditsComponent ? (
-          <View
-            style={{
-              backgroundColor: colors.creditSoft,
-              borderRadius: radius.md,
-              padding: spacing.md,
-              borderWidth: 1,
-              borderColor: '#FDE68A',
-              gap: spacing.xs,
-            }}
-          >
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Badge label="TRAMO EN CRÉDITOS" fg={colors.credit} bg="#FDE68A" icon="time-outline" />
-              <Text variant="heading" color={colors.credit}>
-                {formatCredits(s.price.creditAmount ?? 0)}
-              </Text>
-            </View>
-            <Text variant="bodyStrong">{creditEscrowLabel}</Text>
-            <Text variant="caption" color={colors.textMuted}>
-              Clave idempotente: {s.state === 'completed' ? `release:${s.id}` : `hold:${s.id}`}
+        <View
+          style={{
+            paddingTop: spacing.md,
+            borderTopWidth: 1,
+            borderTopColor: colors.border,
+            gap: spacing.xs,
+          }}
+        >
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Badge
+              label={t('sesDetEscrowCreditsBadge')}
+              fg={colors.credit}
+              bg={colors.creditSoft}
+              icon="time-outline"
+            />
+            <Text variant="heading" color={colors.credit}>
+              {formatCredits(s.creditAmount, locale)}
             </Text>
           </View>
-        ) : null}
-
-        {/* Monetary (ARS) portion */}
-        {hasMoneyComponent ? (
-          <View
-            style={{
-              backgroundColor: colors.moneySoft,
-              borderRadius: radius.md,
-              padding: spacing.md,
-              borderWidth: 1,
-              borderColor: '#A7F3D0',
-              gap: spacing.sm,
-            }}
-          >
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Badge label="TRAMO EN DINERO (ARS)" fg={colors.money} bg="#A7F3D0" icon="cash-outline" />
-              <Text variant="heading" color={colors.money}>
-                {formatMoneyCents(s.price.moneyAmountCents ?? 0)}
-              </Text>
-            </View>
-
-            <Text variant="bodyStrong">
-              Estado:{' '}
-              {mp?.status === 'confirmed_by_payee'
-                ? 'Recepción confirmada por el instructor'
-                : mp?.status === 'reported_by_payer'
-                  ? 'Pago informado por el aprendiz (pendiente de confirmación)'
-                  : mp?.status === 'refunded'
-                    ? 'Sin cargo / Reintegrado por cancelación'
-                    : mp?.status === 'disputed'
-                      ? 'En revisión administrativa (48 h)'
-                      : 'Pendiente de abono entre las partes'}
-            </Text>
-
-            {mp?.externalRef ? (
-              <Text variant="caption" color={colors.text}>
-                Referencia / Comprobante: {mp.externalRef}
-              </Text>
-            ) : null}
-
-            {/* Learner action: report ARS payment */}
-            {!teaching &&
-            s.state !== 'cancelled' &&
-            s.state !== 'declined' &&
-            mp?.status !== 'confirmed_by_payee' ? (
-              <View
-                style={{
-                  backgroundColor: colors.surface,
-                  borderRadius: radius.sm,
-                  padding: spacing.sm,
-                  gap: spacing.sm,
-                }}
-              >
-                <Text variant="caption" color={colors.text} style={{ fontWeight: '600' }}>
-                  Informar tu pago en ARS al instructor
-                </Text>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs }}>
-                  <Chip
-                    label="Mercado Pago / Alias"
-                    selected={paymentMethod === 'mercadopago'}
-                    onPress={() => setPaymentMethod('mercadopago')}
-                  />
-                  <Chip
-                    label="Efectivo / Transferencia"
-                    selected={paymentMethod === 'cash_or_transfer'}
-                    onPress={() => setPaymentMethod('cash_or_transfer')}
-                  />
-                </View>
-                <TextInput
-                  value={paymentRef}
-                  onChangeText={setPaymentRef}
-                  placeholder="Comprobante o nota (ej. Alias / # operación)…"
-                  placeholderTextColor={colors.textMuted}
-                  style={{
-                    backgroundColor: colors.surfaceAlt,
-                    borderWidth: 1,
-                    borderColor: colors.border,
-                    borderRadius: radius.sm,
-                    paddingHorizontal: spacing.sm,
-                    minHeight: 40,
-                    fontSize: 13,
-                    color: colors.text,
-                  }}
-                />
-                <Button
-                  title={
-                    mp?.status === 'reported_by_payer'
-                      ? 'Actualizar comprobante en ARS'
-                      : 'Informar pago en ARS'
-                  }
-                  variant="secondary"
-                  icon="paper-plane-outline"
-                  loading={reportPayment.isPending}
-                  onPress={handleReportPayment}
-                />
-              </View>
-            ) : null}
-
-            {/* Instructor action: confirm ARS receipt */}
-            {teaching &&
-            s.state !== 'cancelled' &&
-            s.state !== 'declined' &&
-            mp?.status !== 'confirmed_by_payee' ? (
-              <Button
-                title="Confirmar recepción de ARS"
-                icon="checkmark-done-outline"
-                loading={confirmPayment.isPending}
-                onPress={handleConfirmPayment}
-              />
-            ) : null}
-          </View>
-        ) : null}
+          <Text variant="bodyStrong">{creditEscrowLabel}</Text>
+        </View>
       </Card>
 
       {/* Instructor confirmation / decline controls */}
       {canInstructorRespond ? (
         <Card style={{ gap: spacing.md, borderColor: colors.accent }}>
           <Badge
-            label="SOLICITUD PENDIENTE DE TU RESPUESTA"
+            label={t('sesDetPendingBadge')}
             fg={colors.accent}
             bg={colors.accentSoft}
             icon="notifications-outline"
           />
           <Text variant="bodyStrong">
-            {counterpart.data?.displayName ?? 'Un miembro'} solicitó tomar esta actividad con vos.
+            {t('sesDetPendingPrompt', { name: counterpart.data?.displayName ?? t('commonMember') })}
           </Text>
           <View style={{ flexDirection: 'row', gap: spacing.sm }}>
             <Button
-              title="Confirmar sesión"
+              title={t('sesDetConfirmBtn')}
               icon="checkmark-circle-outline"
               loading={respondToSession.isPending}
               style={{ flex: 1 }}
               onPress={() => handleRespond('confirm')}
             />
             <Button
-              title="Rechazar"
+              title={t('sesDetDeclineBtn')}
               variant="danger"
               icon="close-circle-outline"
               loading={respondToSession.isPending}
@@ -531,10 +383,10 @@ export default function SessionDetailScreen() {
           onPress={() => router.push({ pathname: '/user/[id]', params: { id: counterpart.data!.id } })}
           style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}
         >
-          <Avatar name={counterpart.data.displayName} size={46} />
+          <Avatar name={counterpart.data.displayName} uri={counterpart.data.avatarUrl} size={46} />
           <View style={{ flex: 1 }}>
             <Text variant="caption" color={colors.textMuted}>
-              {teaching ? 'Quien aprende' : 'Quien enseña'}
+              {teaching ? t('sesDetRoleWhoLearns') : t('sesDetRoleWhoTeaches')}
             </Text>
             <Text variant="heading">{counterpart.data.displayName}</Text>
           </View>
@@ -542,52 +394,52 @@ export default function SessionDetailScreen() {
         </Card>
       ) : null}
 
-      {/* Stage 5: Interactive Two-Stage Dynamic QR Verification (90s SHA-256 nonces) */}
+      {/* Two-Stage Dynamic QR Verification (flattened step rows & QR section) */}
       <Card style={{ gap: spacing.md, borderColor: colors.primary }}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flex: 1 }}>
             <Ionicons name="qr-code-outline" size={22} color={colors.primary} />
-            <Text variant="heading">Verificación QR en 2 etapas</Text>
+            <Text variant="heading">{t('sesDetQrTitle')}</Text>
           </View>
           <Badge
             label={
               s.state === 'completed'
-                ? '2/2 VERIFICADA'
+                ? t('sesDetQrBadgeDone')
                 : s.state === 'in_progress'
-                  ? 'ETAPA 2: CIERRE'
-                  : 'ETAPA 1: INICIO'
+                  ? t('sesDetQrBadgeOut')
+                  : t('sesDetQrBadgeIn')
             }
-            fg={s.state === 'completed' ? colors.money : colors.primary}
-            bg={s.state === 'completed' ? colors.moneySoft : colors.primarySoft}
+            fg={s.state === 'completed' ? colors.success : colors.primary}
+            bg={s.state === 'completed' ? colors.successSoft : colors.primarySoft}
             icon="shield-checkmark-outline"
           />
         </View>
 
-        {/* Step indicators */}
-        <View style={{ gap: spacing.xs }}>
+        {/* Step indicators separated by clean dividers */}
+        <View>
           <View
             style={{
               flexDirection: 'row',
               alignItems: 'center',
               gap: spacing.sm,
-              backgroundColor: colors.surfaceAlt,
-              padding: spacing.sm,
-              borderRadius: radius.sm,
+              paddingVertical: spacing.sm,
+              borderTopWidth: 1,
+              borderTopColor: colors.border,
             }}
           >
             <Ionicons
               name={s.checkedInAt || s.state === 'completed' ? 'checkmark-circle' : 'ellipse-outline'}
               size={18}
-              color={s.checkedInAt || s.state === 'completed' ? colors.money : colors.textMuted}
+              color={s.checkedInAt || s.state === 'completed' ? colors.success : colors.textMuted}
             />
             <View style={{ flex: 1 }}>
-              <Text variant="bodyStrong">Etapa 1: Check-in de inicio</Text>
+              <Text variant="bodyStrong">{t('sesDetQrStep1Title')}</Text>
               <Text variant="caption" color={colors.textMuted}>
                 {s.checkedInAt
-                  ? `Verificado a las ${formatTime(s.checkedInAt)}`
+                  ? t('sesDetQrStep1Done', { time: formatTime(s.checkedInAt) })
                   : s.state === 'completed'
-                    ? 'Asistencia de inicio verificada'
-                    : 'Confirma que ambos participantes se encontraron'}
+                    ? t('sesDetQrStep1DoneNoTime')
+                    : t('sesDetQrStep1Pending')}
               </Text>
             </View>
           </View>
@@ -597,24 +449,24 @@ export default function SessionDetailScreen() {
               flexDirection: 'row',
               alignItems: 'center',
               gap: spacing.sm,
-              backgroundColor: colors.surfaceAlt,
-              padding: spacing.sm,
-              borderRadius: radius.sm,
+              paddingVertical: spacing.sm,
+              borderTopWidth: 1,
+              borderTopColor: colors.border,
             }}
           >
             <Ionicons
               name={s.checkedOutAt || s.state === 'completed' ? 'checkmark-circle' : 'ellipse-outline'}
               size={18}
-              color={s.checkedOutAt || s.state === 'completed' ? colors.money : colors.textMuted}
+              color={s.checkedOutAt || s.state === 'completed' ? colors.success : colors.textMuted}
             />
             <View style={{ flex: 1 }}>
-              <Text variant="bodyStrong">Etapa 2: Check-out de cierre y liberación atómica</Text>
+              <Text variant="bodyStrong">{t('sesDetQrStep2Title')}</Text>
               <Text variant="caption" color={colors.textMuted}>
                 {s.checkedOutAt
-                  ? `Verificado a las ${formatTime(s.checkedOutAt)} · Custodia liberada`
+                  ? t('sesDetQrStep2Done', { time: formatTime(s.checkedOutAt) })
                   : s.state === 'completed'
-                    ? 'Cierre verificado · Créditos transferidos al instructor'
-                    : 'Al finalizar, libera los créditos en custodia al instructor'}
+                    ? t('sesDetQrStep2DoneNoTime')
+                    : t('sesDetQrStep2Pending')}
               </Text>
             </View>
           </View>
@@ -622,21 +474,20 @@ export default function SessionDetailScreen() {
 
         {/* Interactive QR generator & validator for confirmed or in_progress sessions */}
         {currentPhase ? (
-          <View style={{ gap: spacing.md }}>
+          <View
+            style={{
+              gap: spacing.md,
+              paddingTop: spacing.md,
+              borderTopWidth: 1,
+              borderTopColor: colors.border,
+            }}
+          >
             {activeToken && activeToken.phase === currentPhase ? (
-              <View
-                style={{
-                  backgroundColor: colors.surfaceAlt,
-                  borderRadius: radius.md,
-                  padding: spacing.md,
-                  alignItems: 'center',
-                  gap: spacing.sm,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                }}
-              >
+              <View style={{ alignItems: 'center', gap: spacing.sm }}>
                 <Badge
-                  label={`TOKEN DINÁMICO DE 90 S · ${currentPhase === 'check_in' ? 'CHECK-IN' : 'CHECK-OUT'}`}
+                  label={t('sesDetQrTokenBadge', {
+                    phase: currentPhase === 'check_in' ? 'CHECK-IN' : 'CHECK-OUT',
+                  })}
                   fg={colors.primary}
                   bg={colors.primarySoft}
                   icon="time-outline"
@@ -646,28 +497,23 @@ export default function SessionDetailScreen() {
                   {activeToken.code}
                 </Text>
                 <Text variant="caption" color={colors.textMuted} align="center">
-                  Hash SHA-256: {activeToken.tokenHash.slice(0, 20)}…{'\n'}
-                  Expira a las {formatTime(activeToken.expiresAt)} (uso único)
+                  {t('sesDetQrExpiresAt', { time: formatTime(activeToken.expiresAt) })}
                 </Text>
-                <Button
-                  title={
-                    currentPhase === 'check_in'
-                      ? 'Simular escaneo de inicio (Etapa 1/2)'
-                      : 'Simular escaneo de cierre y liberar créditos (Etapa 2/2)'
-                  }
-                  icon="checkmark-done-circle-outline"
-                  loading={redeemToken.isPending}
-                  fullWidth
-                  onPress={() => handleRedeemQr(currentPhase, activeToken.code)}
-                />
+                {isDemoData && counterpartId ? (
+                  <Button
+                    title={
+                      currentPhase === 'check_in' ? t('sesDetQrSimCheckIn') : t('sesDetQrSimCheckOut')
+                    }
+                    icon="checkmark-done-circle-outline"
+                    loading={redeemToken.isPending}
+                    fullWidth
+                    onPress={() => handleRedeemQr(currentPhase, activeToken.code, true)}
+                  />
+                ) : null}
               </View>
             ) : (
               <Button
-                title={
-                  currentPhase === 'check_in'
-                    ? 'Emitir código QR de inicio (90 s)'
-                    : 'Emitir código QR de cierre (90 s)'
-                }
+                title={currentPhase === 'check_in' ? t('sesDetQrIssueCheckIn') : t('sesDetQrIssueCheckOut')}
                 icon="qr-code-outline"
                 loading={issueToken.isPending}
                 onPress={() => handleIssueQr(currentPhase)}
@@ -677,7 +523,7 @@ export default function SessionDetailScreen() {
             {/* Manual 6-char code redemption */}
             <View style={{ gap: spacing.xs }}>
               <Text variant="caption" color={colors.textMuted}>
-                ¿Tu contraparte emitió el QR en su celular? Ingresá su código de 6 caracteres:
+                {t('sesDetQrManualPrompt')}
               </Text>
               <View style={{ flexDirection: 'row', gap: spacing.sm }}>
                 <TextInput
@@ -685,11 +531,11 @@ export default function SessionDetailScreen() {
                   onChangeText={setManualCode}
                   autoCapitalize="characters"
                   maxLength={8}
-                  placeholder="Ej. K9T4M2"
+                  placeholder={t('sesDetQrManualPlaceholder')}
                   placeholderTextColor={colors.textMuted}
                   style={{
                     flex: 1,
-                    backgroundColor: colors.surface,
+                    backgroundColor: colors.bg,
                     borderWidth: 1,
                     borderColor: colors.border,
                     borderRadius: radius.md,
@@ -701,7 +547,7 @@ export default function SessionDetailScreen() {
                   }}
                 />
                 <Button
-                  title="Validar"
+                  title={t('sesDetQrValidateBtn')}
                   variant="secondary"
                   loading={redeemToken.isPending}
                   onPress={() => handleRedeemQr(currentPhase)}
@@ -711,18 +557,18 @@ export default function SessionDetailScreen() {
           </View>
         ) : s.state === 'requested' ? (
           <Text variant="caption" color={colors.textMuted}>
-            La verificación QR se habilita automáticamente una vez que el instructor confirma la solicitud.
+            {t('sesDetQrWaitConfirm')}
           </Text>
         ) : null}
       </Card>
 
-      {/* Stage 5: Verified Post-Session Review Card */}
+      {/* Verified Post-Session Review Card (flattened) */}
       {s.state === 'completed' ? (
         <Card style={{ gap: spacing.md, borderColor: colors.accent }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text variant="heading">Reseña verificada del encuentro</Text>
+            <Text variant="heading">{t('sesDetReviewTitle')}</Text>
             <Badge
-              label={myExistingReview ? 'PUBLICADA' : 'HABILITADA'}
+              label={myExistingReview ? t('sesDetReviewPublishedBadge') : t('sesDetReviewEnabledBadge')}
               fg={colors.accent}
               bg={colors.accentSoft}
               icon="star-outline"
@@ -732,33 +578,38 @@ export default function SessionDetailScreen() {
           {myExistingReview ? (
             <View
               style={{
-                backgroundColor: colors.surfaceAlt,
-                borderRadius: radius.md,
-                padding: spacing.md,
+                paddingTop: spacing.md,
+                borderTopWidth: 1,
+                borderTopColor: colors.border,
                 gap: spacing.xs,
               }}
             >
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text variant="bodyStrong">Tu calificación para {counterpart.data?.displayName ?? 'tu vecino'}</Text>
+                <Text variant="bodyStrong">
+                  {t('sesDetReviewYourRating', {
+                    name: counterpart.data?.displayName ?? t('sesDetReviewYourCounterpartFallback'),
+                  })}
+                </Text>
                 <Stars value={myExistingReview.rating} />
               </View>
               <Text color={colors.text}>{myExistingReview.comment}</Text>
               <Text variant="caption" color={colors.textMuted}>
-                Publicada el {formatShortDate(myExistingReview.createdAt)} · Reseña respaldada por asistencia QR
+                {t('sesDetReviewMeta', { date: formatShortDate(myExistingReview.createdAt, locale) })}
               </Text>
             </View>
           ) : (
             <View style={{ gap: spacing.sm }}>
               <Text variant="caption" color={colors.textMuted}>
-                Solo quienes completaron ambas etapas de verificación QR pueden calificar. ¿Cómo fue tu experiencia con{' '}
-                {counterpart.data?.displayName ?? 'tu contraparte'}?
+                {t('sesDetReviewPrompt', {
+                  name: counterpart.data?.displayName ?? t('sesDetReviewCounterpartFallback'),
+                })}
               </Text>
               <View style={{ flexDirection: 'row', gap: spacing.sm, alignItems: 'center' }}>
                 {([1, 2, 3, 4, 5] as const).map((star) => (
                   <Pressable
                     key={star}
                     accessibilityRole="button"
-                    accessibilityLabel={`${star} estrellas`}
+                    accessibilityLabel={t('starsA11y', { value: star })}
                     onPress={() => setReviewRating(star)}
                     style={{
                       paddingVertical: 6,
@@ -778,11 +629,11 @@ export default function SessionDetailScreen() {
               <TextInput
                 value={reviewComment}
                 onChangeText={setReviewComment}
-                placeholder="Contá qué aprendiste o cómo resultó el intercambio…"
+                placeholder={t('sesDetReviewPlaceholder')}
                 placeholderTextColor={colors.textMuted}
                 multiline
                 style={{
-                  backgroundColor: colors.surface,
+                  backgroundColor: colors.bg,
                   borderWidth: 1,
                   borderColor: colors.border,
                   borderRadius: radius.md,
@@ -794,7 +645,7 @@ export default function SessionDetailScreen() {
                 }}
               />
               <Button
-                title="Publicar reseña verificada"
+                title={t('sesDetReviewSubmitBtn')}
                 icon="star-outline"
                 loading={submitReview.isPending}
                 onPress={handleSubmitReview}
@@ -804,36 +655,35 @@ export default function SessionDetailScreen() {
         </Card>
       ) : null}
 
-      {/* Stage 4: 48-Hour Late-Cancellation Review Window & Force-Majeure Objection */}
+      {/* 48-Hour Late-Cancellation Review Window & Force-Majeure Objection (flattened) */}
       {inLateReviewWindow ? (
-        <Card style={{ backgroundColor: colors.warningSoft, borderColor: colors.warning, gap: spacing.md }}>
+        <Card variant="flat" style={{ backgroundColor: colors.warningSoft, borderColor: colors.warning, gap: spacing.md }}>
           <Badge
-            label="VENTANA DE REVISIÓN DE 48 H · SIN PENALIDAD AUTOMÁTICA"
+            label={t('sesDetWindowBadge')}
             fg={colors.warning}
             bg={colors.surface}
             icon="shield-half-outline"
           />
-          <Text variant="bodyStrong">
-            Esta sesión fue cancelada con menos de 24 h de anticipación.
-          </Text>
+          <Text variant="bodyStrong">{t('sesDetWindowTitle')}</Text>
           <Text variant="caption" color={colors.text}>
-            En Community Skill Exchange nunca aplicamos penalidades automáticas irreversibles. Los créditos quedan en
-            custodia durante 48 horas
-            {s.reviewWindowEndsAt ? ` (hasta el ${formatShortDate(s.reviewWindowEndsAt)})` : ''} para contemplar causas
-            de fuerza mayor o acuerdos entre las partes.
+            {t('sesDetWindowBody', {
+              until: s.reviewWindowEndsAt
+                ? t('sesDetWindowUntil', { date: formatShortDate(s.reviewWindowEndsAt, locale) })
+                : '',
+            })}
           </Text>
 
           {s.objectionReason ? (
             <View
               style={{
-                backgroundColor: colors.surface,
-                borderRadius: radius.sm,
-                padding: spacing.md,
+                paddingTop: spacing.md,
+                borderTopWidth: 1,
+                borderTopColor: colors.warningBorder,
                 gap: 6,
               }}
             >
               <Badge
-                label="DESCARGO PRESENTADO · EN REVISIÓN"
+                label={t('sesDetObjSubmittedBadge')}
                 fg={colors.primary}
                 bg={colors.primarySoft}
                 icon="document-text-outline"
@@ -841,26 +691,25 @@ export default function SessionDetailScreen() {
               <Text variant="bodyStrong">{s.objectionReason}</Text>
               {s.objectionSubmittedAt ? (
                 <Text variant="caption" color={colors.textMuted}>
-                  Enviado el {formatShortDate(s.objectionSubmittedAt)}. La transferencia permanece retenida hasta la
-                  resolución.
+                  {t('sesDetObjSentAt', { date: formatShortDate(s.objectionSubmittedAt, locale) })}
                 </Text>
               ) : null}
               <Button
-                title="Ver en panel de moderación comunitaria"
+                title={t('sesDetObjViewAdmin')}
                 variant="secondary"
                 icon="shield-outline"
                 onPress={() => router.push('/admin')}
               />
             </View>
-          ) : (
-            <View style={{ gap: spacing.sm }}>
+          ) : s.state === 'cancelled' && s.cancellationTiming === 'late_review_window' ? (
+            <View style={{ gap: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: colors.warningBorder }}>
               <Text variant="caption" color={colors.text} style={{ fontWeight: '600' }}>
-                ¿Tuviste un imprevisto de salud, clima o fuerza mayor? Presentá tu descargo dentro de las 48 h:
+                {t('sesDetObjPrompt')}
               </Text>
               <TextInput
                 value={objectionText}
                 onChangeText={setObjectionText}
-                placeholder="Ej. Tormenta fuerte en Santo Tomás / imprevisto médico familiar…"
+                placeholder={t('sesDetObjPlaceholder')}
                 placeholderTextColor={colors.textMuted}
                 style={{
                   backgroundColor: colors.surface,
@@ -874,23 +723,21 @@ export default function SessionDetailScreen() {
                 }}
               />
               <Button
-                title="Presentar descargo por fuerza mayor"
+                title={t('sesDetObjSubmitBtn')}
                 icon="shield-checkmark-outline"
                 loading={submitObjection.isPending}
                 onPress={handleSubmitObjection}
               />
             </View>
-          )}
+          ) : null}
         </Card>
       ) : null}
 
       {/* Cancellation controls & policy */}
-      <Card style={{ backgroundColor: colors.surfaceAlt, gap: spacing.sm }}>
-        <Text variant="bodyStrong">Política de cancelación y disputas</Text>
+      <Card variant="tinted" style={{ gap: spacing.sm }}>
+        <Text variant="bodyStrong">{t('sesDetPolicyTitle')}</Text>
         <Text variant="caption" color={colors.textMuted}>
-          • Cancelación con más de 24 h de anticipación: reintegro inmediato del 100% de los créditos en custodia.{'\n'}
-          • Cancelación dentro de las 24 h previas: se abre una ventana de revisión de 48 h donde podés presentar un
-          descargo por fuerza mayor. Nunca se ejecutan penalidades automáticas irreversibles.
+          {t('sesDetPolicyBody')}
         </Text>
         {canCancel ? (
           showCancelBox ? (
@@ -898,7 +745,7 @@ export default function SessionDetailScreen() {
               <TextInput
                 value={cancelReason}
                 onChangeText={setCancelReason}
-                placeholder="Motivo de cancelación (opcional)…"
+                placeholder={t('sesDetCancelPlaceholder')}
                 placeholderTextColor={colors.textMuted}
                 style={{
                   backgroundColor: colors.surface,
@@ -915,16 +762,16 @@ export default function SessionDetailScreen() {
               {!teaching ? (
                 <View style={{ gap: spacing.xs }}>
                   <Text variant="caption" color={colors.textMuted}>
-                    Modalidad de cancelación (permite probar ambos escenarios en la demo):
+                    {t('sesDetCancelModePrompt')}
                   </Text>
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs }}>
                     <Chip
-                      label="Con > 24 h (reintegro inmediato)"
+                      label={t('sesDetCancelTimelyChip')}
                       selected={!simulateLate}
                       onPress={() => setSimulateLate(false)}
                     />
                     <Chip
-                      label="Simular < 24 h (ventana 48 h)"
+                      label={t('sesDetCancelLateChip')}
                       selected={simulateLate}
                       onPress={() => setSimulateLate(true)}
                     />
@@ -934,26 +781,32 @@ export default function SessionDetailScreen() {
 
               <View style={{ flexDirection: 'row', gap: spacing.sm }}>
                 <Button
-                  title="Confirmar cancelación"
+                  title={t('sesDetCancelConfirmBtn')}
                   variant="danger"
                   loading={cancelSession.isPending}
                   style={{ flex: 1 }}
                   onPress={handleCancel}
                 />
                 <Button
-                  title="Volver"
+                  title={t('commonBack')}
                   variant="ghost"
                   style={{ flex: 1 }}
-                  onPress={() => setShowCancelBox(false)}
+                  onPress={() => {
+                    animateLayout();
+                    setShowCancelBox(false);
+                  }}
                 />
               </View>
             </View>
           ) : (
             <Button
-              title="Cancelar esta sesión"
+              title={t('sesDetCancelTriggerBtn')}
               variant="danger"
               icon="ban-outline"
-              onPress={() => setShowCancelBox(true)}
+              onPress={() => {
+                animateLayout();
+                setShowCancelBox(true);
+              }}
             />
           )
         ) : null}

@@ -65,7 +65,7 @@ npm run start:tunnel
 
 ## 5. Cómo conectar la aplicación a Supabase
 
-Durante las **Etapas 1 y 2**, la aplicación utiliza el repositorio de demostración (`src/services/mockRepository.ts`) e identifica claramente en pantalla que los datos son simulados (`DATOS DE DEMOSTRACIÓN`).
+Por defecto (`EXPO_PUBLIC_DATA_MODE=mock` o sin definir), la aplicación utiliza el repositorio de demostración (`src/services/mockRepository.ts`) e identifica claramente en pantalla que los datos son simulados (`DATOS DE DEMOSTRACIÓN`).
 
 Para conectar tu proyecto de desarrollo de **Supabase**:
 
@@ -84,7 +84,7 @@ Para conectar tu proyecto de desarrollo de **Supabase**:
    ```bash
    npm run start:clear
    ```
-5. En la app, abrí **Mi perfil → Abrir diagnóstico técnico** (`/dev`) y presioná **«Probar conexión ahora»** para verificar la latencia y el estado HTTP contra Supabase desde tu teléfono.
+5. En la app, abrí **Mi perfil → Configuración (`/settings`) → Diagnóstico técnico (`/dev`)** y presioná **«Probar conexión ahora»** para verificar la latencia, las invariantes y el estado HTTP contra Supabase desde tu teléfono.
 
 ---
 
@@ -93,6 +93,7 @@ Para conectar tu proyecto de desarrollo de **Supabase**:
 ### «Project is incompatible with this version of Expo Go»
 - **Causa:** La app Expo Go instalada en el teléfono no coincide con `expo` (~58.0.x) del proyecto.
 - **Solución:** Actualizá Expo Go desde App Store / Google Play. En Android también podés descargar la versión exacta para SDK 58 desde [expo.dev/go](https://expo.dev/go). Ejecutá `npx expo-doctor` para comprobar que ningún paquete haya cambiado de versión.
+- **Nota para Windows con certificados corporativos/locales:** Si `npx expo-doctor` o `npx expo install --check` reporta `unable to verify the first certificate`, ejecutá el comando con `NODE_OPTIONS=--use-system-ca` (y `CI=1` en entornos no interactivos).
 
 ### El código QR no abre o da «Uncaught Error: java.net.SocketTimeoutException / Could not connect to development server»
 - **Causa:** El teléfono no alcanza la IP local del servidor (redes distintas, VPN activa, firewall o aislamiento Wi-Fi).
@@ -116,6 +117,7 @@ npm run start:clear
 
 # Verificar salud de dependencias y configuración Expo
 npm run doctor
+npx expo install --check
 
 # Verificar tipos de TypeScript
 npm run typecheck
@@ -123,7 +125,7 @@ npm run typecheck
 # Ejecutar linter
 npm run lint
 
-# Ejecutar suite automatizada de pruebas (dominio, libro mayor por partida doble, QR 2 etapas y seguridad)
+# Ejecutar suite automatizada de pruebas (economía, i18n/temas, catálogo/fotos/acceso barrial e invariantes de seguridad)
 npm test
 ```
 
@@ -133,9 +135,11 @@ npm test
 
 Los esquemas versionados se encuentran en `supabase/migrations/` y deben aplicarse en orden en el SQL Editor de Supabase (o con `npx supabase db push`):
 
-1. `supabase/migrations/20261108000001_core_schema.sql` — Tablas principales (`profiles`, `private_profiles`, `skills`, `user_skills`, `activities`, `payment_arrangements`, `sessions`, `credit_accounts`, `credit_transactions`, `monetary_payments`).
-2. `supabase/migrations/20261108000002_rls_and_rpcs.sql` — Políticas Row-Level Security (RLS) y RPCs transaccionales (`ledger_transfer`, `grant_initial_incentive`, `request_session`, `respond_to_session`, `cancel_session`).
-3. `supabase/migrations/20261108000003_exchange_economy.sql` — Separación contable de pagos en ARS (`report_monetary_payment`, `confirm_monetary_payment`), ventana de 48 h con descargo por fuerza mayor (`submit_cancellation_objection`) y auditoría de invariantes (`verify_wallet_invariants`).
+1. `supabase/migrations/20261108000001_initial_schema.sql` — Tablas base (`neighborhoods`, `skill_categories`, `skills`, `profiles`, `private_profiles`, `user_skills`, `activities`, `payment_arrangements`, `sessions`, `credit_accounts`, `credit_transactions`, `reviews`, `disputes`, `reports`, `blocks`, `notifications`) y políticas iniciales de Row-Level Security (RLS).
+2. `supabase/migrations/20261108000002_core_rpcs.sql` — Funciones transaccionales base (`ensure_user_credit_account`, `ledger_transfer`, `publish_activity_with_arrangement`, `book_session`, `respond_to_session`, `cancel_session`).
+3. `supabase/migrations/20261108000003_exchange_economy.sql` — Ventana de revisión de 48 h con descargo por fuerza mayor (`submit_cancellation_objection`) y auditoría de invariantes (`verify_ledger_invariants()`).
 4. `supabase/migrations/20261108000004_trust_and_community.sql` — Verificación QR en 2 etapas con nonces efímeros de 90 s (`issue_session_token`, `redeem_session_token`), reseñas verificadas (`submit_verified_review`), notificaciones y moderación de disputas (`resolve_dispute`).
-5. `supabase/seed.sql` — Datos iniciales de barrios (`Santo Tomás`, `Pilar Centro`, `Presidente Derqui`), categorías, catálogo de habilidades y cuentas del sistema (`system_mint`, `escrow`).
-
+5. `supabase/migrations/20261125000005_integer_only_credits.sql` — Elimina por completo las columnas, funciones y tabla heredada de pagos en dinero real y divisiones parciales; impone créditos de tiempo estrictamente enteros (`>= 1`) y no canjeables (`is_non_cashable = true`) en tablas, RPCs y `verify_ledger_invariants()`.
+6. `supabase/migrations/20261125000006_catalog_storage_neighborhood_access.sql` — Catálogo de 7 categorías, soporte de habilidades personalizadas (`create_custom_skill`), bucket `avatars` con RLS por propietario en `storage.objects`, estado activo por barrio (`Santo Tomás` activo; `Pilar Centro` y `Presidente Derqui` inactivos) y validación hash-verificada mediante `pgcrypto` (`private_neighborhood_codes`, `verify_neighborhood_access`).
+7. `supabase/migrations/20261125000007_safety_invariants_hardening.sql` — Endurecimiento de seguridad: RPC `submit_eligibility` (+18 y `private_profiles`), trigger `guard_profiles_neighborhood_fields` que bloquea escrituras directas del cliente sobre `neighborhood_verified_at`/`neighborhood_id`, verificación de perfil existente en `verify_neighborhood_access`, restricción `activities_public_meeting_area_check` contra domicilios privados y guardas de estado/ventana/unicidad en `submit_cancellation_objection`, `disputes` y `resolve_dispute`.
+8. `supabase/seed.sql` — Datos iniciales de barrios (`Santo Tomás` activo, `Pilar Centro` y `Presidente Derqui` inactivos), las 7 categorías, 32 habilidades base, `app_config` y cuentas del sistema (`escrow`, `incentive_pool`, `adjustments`), sin almacenar códigos de acceso en texto plano.

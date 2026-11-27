@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import Constants from 'expo-constants';
+import { router } from 'expo-router';
 import { Platform, View } from 'react-native';
 
 import { config } from '../lib/config';
@@ -9,15 +10,16 @@ import { runPilotReadinessAudit } from '../lib/pilotAudit';
 import { useCurrentUserId, useLedgerIntegrity } from '../services/queries';
 import { checkBackendHealth } from '../services/supabase';
 import { InfoRow, Screen } from '../ui/layout';
-import { Badge, Button, Card, Chip, Text } from '../ui/primitives';
-import { colors, spacing } from '../ui/theme';
+import { Badge, Button, Card, Text } from '../ui/primitives';
+import { spacing, useTheme } from '../ui/theme';
 
 export default function DevDiagnosticsScreen() {
-  const { locale, setLocale } = useI18n();
+  const { colors } = useTheme();
+  const { locale, t } = useI18n();
   const { data: userId } = useCurrentUserId();
   const integrity = useLedgerIntegrity(userId);
   const healthQuery = useQuery({
-    queryKey: ['backend-health'],
+    queryKey: ['backend-health', locale],
     queryFn: checkBackendHealth,
   });
 
@@ -33,23 +35,24 @@ export default function DevDiagnosticsScreen() {
 
   return (
     <Screen edges={['bottom']}>
-      <Text variant="title">Diagnóstico y Auditoría Piloto (Etapa 6)</Text>
+      <Text variant="title">{t('devTitle')}</Text>
       <Text variant="caption" color={colors.textMuted}>
-        Verificación en vivo de compatibilidad con Expo Go, auditoría de lanzamiento piloto, zona horaria, idioma,
-        conexión al backend e invariantes contables.
+        {t('devSubtitle')}
       </Text>
 
       <Card style={{ gap: spacing.md }}>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text variant="heading">Auditoría de Lanzamiento Piloto</Text>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.sm }}>
+          <Text variant="heading" style={{ flex: 1 }}>
+            {t('devAuditTitle')}
+          </Text>
           <Badge
             label={
               pilotAudit.readyForPilot
-                ? `LISTO (${pilotAudit.passedCount}/${pilotAudit.totalCount})`
-                : 'REVISAR PENDIENTES'
+                ? t('devAuditReady', { passed: pilotAudit.passedCount, total: pilotAudit.totalCount })
+                : t('devAuditPending')
             }
-            fg={pilotAudit.readyForPilot ? colors.money : colors.warning}
-            bg={pilotAudit.readyForPilot ? colors.moneySoft : colors.warningSoft}
+            fg={pilotAudit.readyForPilot ? colors.success : colors.warning}
+            bg={pilotAudit.readyForPilot ? colors.successSoft : colors.warningSoft}
             icon="rocket-outline"
           />
         </View>
@@ -64,53 +67,54 @@ export default function DevDiagnosticsScreen() {
       </Card>
 
       <Card style={{ gap: spacing.md }}>
-        <Text variant="heading">Idioma y Zona Horaria</Text>
-        <InfoRow icon="globe-outline" label="Zona horaria oficial" value={config.timeZone} />
-        <InfoRow icon="time-outline" label="Timestamp UTC actual" value={nowIso} />
+        <Text variant="heading">{t('devLocaleTzTitle')}</Text>
+        <InfoRow icon="globe-outline" label={t('devOfficialTz')} value={config.timeZone} />
+        <InfoRow icon="time-outline" label={t('devUtcNow')} value={nowIso} />
         <InfoRow
           icon="calendar-outline"
-          label="Conversión a Buenos Aires"
-          value={formatSessionDate(nowIso)}
+          label={t('devBaConversion')}
+          value={formatSessionDate(nowIso, locale)}
         />
-        <InfoRow icon="language-outline" label="Locale detectado del dispositivo" value={getDeviceLocaleCode()} />
-        <View style={{ flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap' }}>
-          <Chip
-            label="🇦🇷 Español (Argentina)"
-            selected={locale === 'es-AR'}
-            onPress={() => setLocale('es-AR')}
-          />
-          <Chip
-            label="🌐 English"
-            selected={locale === 'en'}
-            onPress={() => setLocale('en')}
-          />
-        </View>
+        <InfoRow icon="language-outline" label={t('devDeviceLocale')} value={getDeviceLocaleCode()} />
+        <InfoRow
+          icon="checkmark-circle-outline"
+          label={t('devActiveLocale')}
+          value={locale === 'en' ? t('localeEn') : t('localeEsAr')}
+        />
+        <Button
+          title={t('devChangeInSettings')}
+          variant="secondary"
+          icon="settings-outline"
+          onPress={() => router.push('/settings')}
+        />
       </Card>
 
       <Card style={{ gap: spacing.md }}>
-        <Text variant="heading">Runtime y Expo Go</Text>
-        <InfoRow icon="phone-portrait-outline" label="Plataforma" value={`${Platform.OS} (${Platform.Version})`} />
+        <Text variant="heading">{t('devRuntimeTitle')}</Text>
+        <InfoRow icon="phone-portrait-outline" label={t('devPlatform')} value={`${Platform.OS} (${Platform.Version})`} />
         <InfoRow
           icon="layers-outline"
-          label="Expo SDK configurado"
+          label={t('devExpoSdk')}
           value={Constants.expoConfig?.sdkVersion ?? '58.0.0'}
         />
         <InfoRow
           icon="cube-outline"
-          label="Entorno de ejecución"
+          label={t('devExecEnv')}
           value={String(Constants.executionEnvironment ?? 'Expo Go')}
         />
-        <InfoRow icon="flask-outline" label="Modo de datos activo" value={config.dataMode.toUpperCase()} />
+        <InfoRow icon="flask-outline" label={t('devDataMode')} value={config.dataMode.toUpperCase()} />
       </Card>
 
       {integrity.data ? (
         <Card style={{ gap: spacing.md }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text variant="heading">Invariantes del libro mayor</Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.sm }}>
+            <Text variant="heading" style={{ flex: 1 }}>
+              {t('devLedgerTitle')}
+            </Text>
             <Badge
-              label={integrity.data.healthy ? '5/5 INVARIANTES OK' : 'ERROR CONTABLE'}
-              fg={integrity.data.healthy ? colors.money : colors.danger}
-              bg={integrity.data.healthy ? colors.moneySoft : colors.dangerSoft}
+              label={integrity.data.healthy ? t('devLedgerOk') : t('devLedgerErr')}
+              fg={integrity.data.healthy ? colors.success : colors.danger}
+              bg={integrity.data.healthy ? colors.successSoft : colors.dangerSoft}
               icon="shield-checkmark-outline"
             />
           </View>
@@ -123,7 +127,7 @@ export default function DevDiagnosticsScreen() {
             />
           ))}
           <Button
-            title="Ejecutar auditoría contable"
+            title={t('devRunAuditBtn')}
             variant="secondary"
             icon="shield-checkmark-outline"
             loading={integrity.isFetching}
@@ -133,27 +137,29 @@ export default function DevDiagnosticsScreen() {
       ) : null}
 
       <Card style={{ gap: spacing.md }}>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text variant="heading">Conectividad con Supabase</Text>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.sm }}>
+          <Text variant="heading" style={{ flex: 1 }}>
+            {t('devSupabaseTitle')}
+          </Text>
           {health ? (
             <Badge
               label={
                 health.status === 'ok'
-                  ? 'CONECTADO'
+                  ? t('devSbConnected')
                   : health.status === 'not_configured'
-                    ? 'MODO DEMO (SIN .ENV)'
-                    : 'ERROR DE RED'
+                    ? t('devSbDemo')
+                    : t('devSbError')
               }
               fg={
                 health.status === 'ok'
-                  ? colors.money
+                  ? colors.success
                   : health.status === 'not_configured'
                     ? colors.warning
                     : colors.danger
               }
               bg={
                 health.status === 'ok'
-                  ? colors.moneySoft
+                  ? colors.successSoft
                   : health.status === 'not_configured'
                     ? colors.warningSoft
                     : colors.dangerSoft
@@ -164,15 +170,15 @@ export default function DevDiagnosticsScreen() {
         <InfoRow
           icon="server-outline"
           label="EXPO_PUBLIC_SUPABASE_URL"
-          value={config.supabaseUrl || '(no configurada aún — se usa mockRepository)'}
+          value={config.supabaseUrl || t('devSbUrlNotConfigured')}
         />
         <InfoRow
           icon="pulse-outline"
-          label="Resultado de verificación"
-          value={health ? `${health.detail}${health.latencyMs ? ` · ${health.latencyMs} ms` : ''}` : 'Verificando…'}
+          label={t('devSbResult')}
+          value={health ? `${health.detail}${health.latencyMs ? ` · ${health.latencyMs} ms` : ''}` : t('devSbChecking')}
         />
         <Button
-          title="Probar conexión ahora"
+          title={t('devTestConnBtn')}
           variant="secondary"
           icon="refresh-outline"
           loading={healthQuery.isFetching}

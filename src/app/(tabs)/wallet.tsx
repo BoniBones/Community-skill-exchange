@@ -1,64 +1,38 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 
-import type { CreditTxType, MonetaryPaymentStatus } from '../../domain/types';
+import type { CreditTxType } from '../../domain/types';
 import { formatShortDate } from '../../lib/dates';
-import { formatCredits, formatMoneyCents } from '../../lib/format';
-import { useCurrentUserId, useLedgerIntegrity, useMonetaryPayments, useWallet } from '../../services/queries';
+import { formatCredits } from '../../lib/format';
+import { useI18n, type TranslateFn } from '../../lib/i18n';
+import { useCurrentUserId, useLedgerIntegrity, useWallet } from '../../services/queries';
 import { DemoBanner, ErrorState, LoadingState, Screen, SectionHeader } from '../../ui/layout';
 import { Badge, Card, Chip, IconCircle, Ionicons, Text, type IconName } from '../../ui/primitives';
-import { colors, radius, spacing } from '../../ui/theme';
+import { animateLayout, radius, spacing, useTheme, type ThemeColors } from '../../ui/theme';
 
-const txMeta: Record<CreditTxType, { label: string; icon: IconName; color: string }> = {
-  incentive: { label: 'Incentivo de participación', icon: 'sparkles-outline', color: colors.accent },
-  hold: { label: 'Reserva de sesión (en custodia)', icon: 'lock-closed-outline', color: colors.info },
-  release: { label: 'Sesión verificada (enseñaste)', icon: 'checkmark-circle-outline', color: colors.money },
-  refund: { label: 'Reintegro por cancelación', icon: 'arrow-undo-outline', color: colors.primary },
-  penalty: { label: 'Penalidad tras revisión', icon: 'alert-circle-outline', color: colors.danger },
-  adjustment: { label: 'Ajuste administrativo', icon: 'construct-outline', color: colors.textMuted },
-};
-
-const mpStatusMeta: Record<MonetaryPaymentStatus, { label: string; fg: string; bg: string; icon: IconName }> = {
-  pending: {
-    label: 'PENDIENTE DE PAGO',
-    fg: colors.warning,
-    bg: colors.warningSoft,
-    icon: 'time-outline',
-  },
-  reported_by_payer: {
-    label: 'INFORMADO POR APRENDIZ',
-    fg: colors.info,
-    bg: colors.infoSoft,
-    icon: 'paper-plane-outline',
-  },
-  confirmed_by_payee: {
-    label: 'CONFIRMADO POR INSTRUCTOR',
-    fg: colors.money,
-    bg: colors.moneySoft,
-    icon: 'checkmark-circle-outline',
-  },
-  disputed: {
-    label: 'EN REVISIÓN (48 H)',
-    fg: colors.danger,
-    bg: colors.dangerSoft,
-    icon: 'shield-half-outline',
-  },
-  refunded: {
-    label: 'SIN CARGO / REINTEGRADO',
-    fg: colors.textMuted,
-    bg: colors.surfaceAlt,
-    icon: 'arrow-undo-outline',
-  },
-};
+function getTxMeta(
+  colors: ThemeColors,
+  t: TranslateFn,
+): Record<CreditTxType, { label: string; icon: IconName; color: string }> {
+  return {
+    incentive: { label: t('txIncentive'), icon: 'sparkles-outline', color: colors.accent },
+    hold: { label: t('txHold'), icon: 'lock-closed-outline', color: colors.info },
+    release: { label: t('txRelease'), icon: 'checkmark-circle-outline', color: colors.success },
+    refund: { label: t('txRefund'), icon: 'arrow-undo-outline', color: colors.primary },
+    penalty: { label: t('txPenalty'), icon: 'alert-circle-outline', color: colors.danger },
+    adjustment: { label: t('txAdjustment'), icon: 'construct-outline', color: colors.textMuted },
+  };
+}
 
 type LedgerFilter = 'all' | 'pending' | 'earned' | 'spent';
 
 export default function WalletScreen() {
+  const { colors } = useTheme();
+  const { locale, t } = useI18n();
   const { data: userId } = useCurrentUserId();
   const wallet = useWallet(userId);
   const integrity = useLedgerIntegrity(userId);
-  const monetaryPayments = useMonetaryPayments(userId);
 
   const [ledgerFilter, setLedgerFilter] = useState<LedgerFilter>('all');
   const [showInvariants, setShowInvariants] = useState(false);
@@ -66,7 +40,7 @@ export default function WalletScreen() {
   if (wallet.isLoading) {
     return (
       <Screen>
-        <LoadingState label="Cargando tus créditos comunitarios…" />
+        <LoadingState label={t('walletLoading')} />
       </Screen>
     );
   }
@@ -79,6 +53,7 @@ export default function WalletScreen() {
     );
   }
 
+  const txMeta = getTxMeta(colors, t);
   const w = wallet.data;
   const maxBalance = w.maxBalance ?? 20;
   const circulationPct = Math.min(100, Math.round(((w.available + w.incomingPending) / maxBalance) * 100));
@@ -94,7 +69,6 @@ export default function WalletScreen() {
   const handleRefresh = () => {
     wallet.refetch();
     integrity.refetch();
-    monetaryPayments.refetch();
   };
 
   return (
@@ -102,43 +76,46 @@ export default function WalletScreen() {
       <DemoBanner compact />
 
       <View style={{ gap: 4 }}>
-        <Text variant="title">Economía de intercambio</Text>
+        <Text variant="title">{t('walletTitle')}</Text>
         <Text variant="caption" color={colors.textMuted}>
-          1 hora enseñando genera 1 crédito comunitario bajo la modalidad estándar. Los créditos y los pagos en pesos
-          (ARS) se contabilizan por separado y nunca existe un tipo de cambio fijo.
+          {t('walletSubtitle')}
         </Text>
       </View>
 
       {/* Main balance card */}
-      <Card style={{ backgroundColor: colors.creditSoft, borderColor: '#FDE68A', gap: spacing.md }}>
+      <Card style={{ backgroundColor: colors.creditSoft, borderColor: colors.creditBorder, gap: spacing.md }}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Badge label="SALDO DISPONIBLE" fg={colors.credit} bg="#FDE68A" icon="time-outline" />
+          <Badge label={t('walletBalanceBadge')} fg={colors.credit} bg={colors.surface} icon="time-outline" />
           <Text variant="caption" color={colors.credit}>
-            Tope sugerido: {maxBalance} créditos
+            {t('walletSuggestedCap', { max: maxBalance })}
           </Text>
         </View>
         <Text variant="display" color={colors.credit}>
-          {formatCredits(w.available)}
+          {formatCredits(w.available, locale)}
         </Text>
 
         {/* Circulation bar */}
         <View style={{ gap: 6 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
             <Text variant="caption" color={colors.textMuted}>
-              Nivel de acumulación vs. circulación sugerida
+              {t('walletCirculationLabel')}
             </Text>
             <Text variant="caption" color={colors.credit} style={{ fontWeight: '600' }}>
-              {circulationPct}% ({w.available + w.incomingPending}/{maxBalance} cr)
+              {t('walletCirculationValue', {
+                pct: circulationPct,
+                current: w.available + w.incomingPending,
+                max: maxBalance,
+              })}
             </Text>
           </View>
           <View
             style={{
               height: 8,
-              backgroundColor: '#FEF3C7',
+              backgroundColor: colors.surface,
               borderRadius: radius.pill,
               overflow: 'hidden',
               borderWidth: 1,
-              borderColor: '#FDE68A',
+              borderColor: colors.creditBorder,
             }}
           >
             <View
@@ -150,9 +127,7 @@ export default function WalletScreen() {
             />
           </View>
           <Text variant="caption" color={colors.textMuted}>
-            {softCapWarning
-              ? '¡Estás cerca del tope sugerido! Te invitamos a usar tus créditos tomando una actividad de otro vecino. Este tope promueve la circulación y nunca bloquea tu participación.'
-              : 'Los créditos están pensados para circular aprendiendo de otros vecinos en lugar de acumularse indefinidamente.'}
+            {softCapWarning ? t('walletSoftCapWarning') : t('walletCirculationNote')}
           </Text>
         </View>
 
@@ -163,21 +138,21 @@ export default function WalletScreen() {
             gap: spacing.md,
             paddingTop: spacing.sm,
             borderTopWidth: 1,
-            borderTopColor: '#FDE68A',
+            borderTopColor: colors.creditBorder,
           }}
         >
           <View style={{ flex: 1, minWidth: 120 }}>
             <Text variant="caption" color={colors.textMuted}>
-              En custodia (reservas)
+              {t('walletHeldEscrow')}
             </Text>
-            <Text variant="bodyStrong">{formatCredits(w.heldInEscrow)}</Text>
+            <Text variant="bodyStrong">{formatCredits(w.heldInEscrow, locale)}</Text>
           </View>
           <View style={{ flex: 1, minWidth: 120 }}>
             <Text variant="caption" color={colors.textMuted}>
-              Por cobrar (a verificar)
+              {t('walletIncomingPending')}
             </Text>
-            <Text variant="bodyStrong" color={colors.money}>
-              +{formatCredits(w.incomingPending)}
+            <Text variant="bodyStrong" color={colors.success}>
+              +{formatCredits(w.incomingPending, locale)}
             </Text>
           </View>
         </View>
@@ -185,28 +160,32 @@ export default function WalletScreen() {
 
       {/* Lifetime totals */}
       <View style={{ flexDirection: 'row', gap: spacing.md }}>
-        <Card style={{ flex: 1, gap: 4 }}>
+        <Card variant="flat" style={{ flex: 1, gap: 4 }}>
           <Text variant="caption" color={colors.textMuted}>
-            Ganados enseñando
+            {t('walletEarnedTotal')}
           </Text>
-          <Text variant="heading" color={colors.money}>
-            +{formatCredits(w.earnedTotal)}
+          <Text variant="heading" color={colors.success}>
+            +{formatCredits(w.earnedTotal, locale)}
           </Text>
         </Card>
-        <Card style={{ flex: 1, gap: 4 }}>
+        <Card variant="flat" style={{ flex: 1, gap: 4 }}>
           <Text variant="caption" color={colors.textMuted}>
-            Usados aprendiendo
+            {t('walletSpentTotal')}
           </Text>
           <Text variant="heading" color={colors.primary}>
-            {formatCredits(w.spentTotal)}
+            {formatCredits(w.spentTotal, locale)}
           </Text>
         </Card>
       </View>
 
-      {/* Auditable Ledger Integrity Check Card */}
+      {/* Auditable Ledger Integrity Check Card (flattened) */}
       {integrity.data ? (
         <Card
-          onPress={() => setShowInvariants((v) => !v)}
+          variant="flat"
+          onPress={() => {
+            animateLayout();
+            setShowInvariants((v) => !v);
+          }}
           style={{
             backgroundColor: integrity.data.healthy ? colors.primarySoft : colors.dangerSoft,
             borderColor: integrity.data.healthy ? colors.primary : colors.danger,
@@ -217,8 +196,11 @@ export default function WalletScreen() {
             <Badge
               label={
                 integrity.data.healthy
-                  ? `AUDITORÍA DE PARTIDA DOBLE · ${integrity.data.invariants.length}/${integrity.data.invariants.length} OK`
-                  : 'REVISAR INVARIANTES CONTABLES'
+                  ? t('walletAuditOk', {
+                      passed: integrity.data.invariants.length,
+                      total: integrity.data.invariants.length,
+                    })
+                  : t('walletAuditReview')
               }
               fg={integrity.data.healthy ? colors.primary : colors.danger}
               bg={colors.surface}
@@ -231,13 +213,11 @@ export default function WalletScreen() {
             />
           </View>
           <Text variant="caption" color={colors.text}>
-            {showInvariants
-              ? 'Verificación en tiempo real de las 5 reglas contables del libro mayor cerrado de créditos:'
-              : 'Tocá para inspeccionar la ecuación de conservación por partida doble, paridad de custodia e idempotencia.'}
+            {showInvariants ? t('walletAuditExpandedSubtitle') : t('walletAuditCollapsedSubtitle')}
           </Text>
 
           {showInvariants ? (
-            <View style={{ gap: spacing.xs, paddingTop: spacing.xs }}>
+            <View style={{ marginTop: spacing.xs }}>
               {integrity.data.invariants.map((inv) => (
                 <View
                   key={inv.id}
@@ -245,15 +225,15 @@ export default function WalletScreen() {
                     flexDirection: 'row',
                     alignItems: 'flex-start',
                     gap: spacing.sm,
-                    backgroundColor: colors.surface,
-                    padding: spacing.sm,
-                    borderRadius: radius.sm,
+                    paddingVertical: spacing.sm,
+                    borderTopWidth: 1,
+                    borderTopColor: colors.border,
                   }}
                 >
                   <Ionicons
                     name={inv.passed ? 'checkmark-circle' : 'alert-circle'}
                     size={18}
-                    color={inv.passed ? colors.money : colors.danger}
+                    color={inv.passed ? colors.success : colors.danger}
                     style={{ marginTop: 2 }}
                   />
                   <View style={{ flex: 1 }}>
@@ -269,74 +249,24 @@ export default function WalletScreen() {
         </Card>
       ) : null}
 
-      {/* Separated Monetary Payments Section (ARS) */}
-      <View style={{ gap: spacing.md }}>
-        <SectionHeader
-          title="Acuerdos en dinero (ARS)"
-          subtitle="Circuito contable separado para actividades «Solo dinero» o «Pago mixto»"
-        />
-
-        {(monetaryPayments.data ?? []).length === 0 ? (
-          <Card style={{ backgroundColor: colors.surfaceAlt }}>
-            <Text variant="caption" color={colors.textMuted}>
-              Todavía no tenés pagos en pesos (ARS) asociados a sesiones en modalidad «Solo dinero» o «Pago mixto».
-            </Text>
-          </Card>
-        ) : (
-          (monetaryPayments.data ?? []).map((mp) => {
-            const meta = mpStatusMeta[mp.status];
-            const isPayee = mp.payeeId === userId;
-            return (
-              <Card
-                key={mp.id}
-                onPress={() => router.push({ pathname: '/session/[id]', params: { id: mp.sessionId } })}
-                style={{ gap: spacing.xs }}
-              >
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Badge label={meta.label} fg={meta.fg} bg={meta.bg} icon={meta.icon} />
-                  <Text variant="heading" color={isPayee ? colors.money : colors.text}>
-                    {isPayee ? '+' : ''}
-                    {formatMoneyCents(mp.amountCents)}
-                  </Text>
-                </View>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <View style={{ flex: 1 }}>
-                    <Text variant="bodyStrong">{mp.activityTitle}</Text>
-                    <Text variant="caption" color={colors.textMuted}>
-                      {isPayee ? 'Cobrás como instructor' : 'Abonás como aprendiz'} ·{' '}
-                      {mp.method === 'mercadopago' ? 'Mercado Pago / Alias' : 'Efectivo o transferencia'}
-                    </Text>
-                    {mp.externalRef ? (
-                      <Text variant="caption" color={colors.info}>
-                        Ref: {mp.externalRef}
-                      </Text>
-                    ) : null}
-                  </View>
-                  <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-                </View>
-              </Card>
-            );
-          })
-        )}
-      </View>
-
       {/* Credit Ledger history with filters */}
       <View style={{ gap: spacing.md }}>
-        <SectionHeader
-          title="Movimientos de créditos"
-          subtitle="Registro auditable de créditos ganados, en custodia, gastados y reintegrados"
-        />
+        <SectionHeader title={t('walletMovementsTitle')} subtitle={t('walletMovementsSubtitle')} />
 
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs }}>
-          <Chip label="Todos" selected={ledgerFilter === 'all'} onPress={() => setLedgerFilter('all')} />
+          <Chip label={t('walletFilterAll')} selected={ledgerFilter === 'all'} onPress={() => setLedgerFilter('all')} />
           <Chip
-            label="En custodia / Pendientes"
+            label={t('walletFilterPending')}
             selected={ledgerFilter === 'pending'}
             onPress={() => setLedgerFilter('pending')}
           />
-          <Chip label="Ganados" selected={ledgerFilter === 'earned'} onPress={() => setLedgerFilter('earned')} />
           <Chip
-            label="Reservas y reintegros"
+            label={t('walletFilterEarned')}
+            selected={ledgerFilter === 'earned'}
+            onPress={() => setLedgerFilter('earned')}
+          />
+          <Chip
+            label={t('walletFilterSpent')}
             selected={ledgerFilter === 'spent'}
             onPress={() => setLedgerFilter('spent')}
           />
@@ -346,23 +276,19 @@ export default function WalletScreen() {
           const meta = txMeta[entry.type];
           const positive = entry.amount > 0;
           return (
-            <Pressable
+            <Card
               key={entry.id}
-              disabled={!entry.sessionId}
-              onPress={() => {
-                if (entry.sessionId) {
-                  router.push({ pathname: '/session/[id]', params: { id: entry.sessionId } });
-                }
-              }}
+              variant="flat"
+              onPress={
+                entry.sessionId
+                  ? () => router.push({ pathname: '/session/[id]', params: { id: entry.sessionId! } })
+                  : undefined
+              }
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
                 gap: spacing.md,
-                backgroundColor: colors.surface,
-                borderRadius: radius.md,
                 padding: spacing.md,
-                borderWidth: 1,
-                borderColor: colors.border,
               }}
             >
               <IconCircle icon={meta.icon} color={meta.color} size={38} />
@@ -370,28 +296,21 @@ export default function WalletScreen() {
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs, flexWrap: 'wrap' }}>
                   <Text variant="bodyStrong">{meta.label}</Text>
                   {entry.status === 'pending' ? (
-                    <Badge label="EN CUSTODIA" fg={colors.warning} bg={colors.warningSoft} />
+                    <Badge label={t('walletPendingBadge')} fg={colors.warning} bg={colors.warningSoft} />
                   ) : null}
                 </View>
                 <Text variant="caption" color={colors.textMuted}>
                   {entry.memo}
                 </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexWrap: 'wrap' }}>
-                  <Text variant="caption" color={colors.textMuted}>
-                    {formatShortDate(entry.createdAt)}
-                  </Text>
-                  {entry.idempotencyKey ? (
-                    <Text variant="caption" color={colors.textMuted}>
-                      · clave: {entry.idempotencyKey}
-                    </Text>
-                  ) : null}
-                </View>
+                <Text variant="caption" color={colors.textMuted}>
+                  {formatShortDate(entry.createdAt, locale)}
+                </Text>
               </View>
-              <Text variant="heading" color={positive ? colors.money : colors.text}>
+              <Text variant="heading" color={positive ? colors.success : colors.text}>
                 {positive ? '+' : ''}
-                {formatCredits(entry.amount)}
+                {formatCredits(entry.amount, locale)}
               </Text>
-            </Pressable>
+            </Card>
           );
         })}
       </View>

@@ -1,11 +1,20 @@
 /**
  * In-memory repository backed by src/mocks/data.ts. DEMO ONLY: it simulates
  * network latency and in-session mutations (onboarding, profile edits, activity
- * publishing with flexible payment arrangements, availability windows, booking
+ * publishing with integer time-credits, availability windows, booking
  * requests with credit escrow holds, session confirm/decline/cancel, and blocking
  * users), but nothing is persisted across app restarts.
  */
-import { categoryOfSkill, skillName } from '../domain/catalog';
+import {
+  CATEGORIES,
+  categoryName,
+  categoryOfSkill,
+  getSkill,
+  NEIGHBORHOODS,
+  registerCustomSkill,
+  SKILLS,
+  skillName,
+} from '../domain/catalog';
 import type {
   Activity,
   ActivityRecommendation,
@@ -17,14 +26,18 @@ import type {
   LedgerIntegrityReport,
   LedgerInvariantCheck,
   MatchKind,
-  MonetaryPayment,
-  PaymentArrangement,
   ProfileStatus,
   Review,
   SafetyReportRecord,
   Session,
   SessionVerificationToken,
+  Skill,
 } from '../domain/types';
+import { verifySaltedSha256 } from '../lib/crypto';
+import { isValidBirthDate } from '../lib/dates';
+import { formatCredits } from '../lib/format';
+import { getActiveLocale, t, type SupportedLocale } from '../lib/i18n';
+import { validateProfilePhotoAsset } from '../lib/profilePhoto';
 import * as db from '../mocks/data';
 import type { Repository } from './repository';
 
@@ -35,6 +48,14 @@ const MIN_PILOT_AGE = 18;
 const CANCELLATION_DEADLINE_HOURS = 24;
 const OBJECTION_WINDOW_HOURS = 48;
 const QR_TOKEN_TTL_SECONDS = 90;
+
+export const SAFETY_POLICY_CONSTANTS = {
+  maxBalance: MAX_BALANCE,
+  minPilotAge: MIN_PILOT_AGE,
+  cancellationDeadlineHours: CANCELLATION_DEADLINE_HOURS,
+  objectionWindowHours: OBJECTION_WINDOW_HOURS,
+  qrTokenTtlSeconds: QR_TOKEN_TTL_SECONDS,
+} as const;
 
 const blockedByUser = new Map<ID, Set<ID>>();
 
@@ -78,40 +99,44 @@ function calculateAge(year: number, month: number, day: number): number {
   return age;
 }
 
-function validatePaymentArrangement(p: PaymentArrangement): PaymentArrangement {
-  if (p.mode === 'credits') {
-    if (!p.creditAmount || p.creditAmount <= 0) {
-      throw new Error('En modalidad «Solo créditos» debés indicar una cantidad mayor a 0.');
-    }
-    return { mode: 'credits', creditAmount: p.creditAmount, currency: 'ARS' };
+function validateCreditAmount(creditAmount: number): number {
+  if (!Number.isInteger(creditAmount) || creditAmount < 1) {
+    throw new Error(t('repoErrInvalidCredits'));
   }
-  if (p.mode === 'money') {
-    if (!p.moneyAmountCents || p.moneyAmountCents <= 0) {
-      throw new Error('En modalidad «Solo dinero» debés indicar un monto en ARS mayor a 0.');
-    }
-    return { mode: 'money', moneyAmountCents: p.moneyAmountCents, currency: 'ARS' };
-  }
-  if (!p.creditAmount || p.creditAmount <= 0 || !p.moneyAmountCents || !p.moneyAmountCents || p.moneyAmountCents <= 0) {
-    throw new Error('En modalidad «Pago mixto» debés indicar tanto créditos (> 0) como un monto en ARS (> 0).');
-  }
-  return {
-    mode: 'mixed',
-    creditAmount: p.creditAmount,
-    moneyAmountCents: p.moneyAmountCents,
-    currency: 'ARS',
-  };
+  return creditAmount;
 }
 
-const WEEKDAY_NAMES = ['Domingos', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábados'];
-const PERIOD_NAMES: Record<DayPeriod, string> = {
-  morning: 'mañana (9–12 h)',
-  afternoon: 'tarde (15–18 h)',
-  evening: 'noche (18–21 h)',
-};
+function getWeekdayPluralName(day: number, locale: SupportedLocale): string {
+  const keys = [
+    'weekdayPlural0',
+    'weekdayPlural1',
+    'weekdayPlural2',
+    'weekdayPlural3',
+    'weekdayPlural4',
+    'weekdayPlural5',
+    'weekdayPlural6',
+  ] as const;
+  return t(keys[day] ?? 'weekdayPlural0', locale);
+}
 
-export function summarizeAvailability(windows: AvailabilityWindow[], customNote?: string): string {
+function getPeriodShortName(period: DayPeriod, locale: SupportedLocale): string {
+  switch (period) {
+    case 'morning':
+      return t('periodMorningShort', locale);
+    case 'afternoon':
+      return t('periodAfternoonShort', locale);
+    case 'evening':
+      return t('periodEveningShort', locale);
+  }
+}
+
+export function summarizeAvailability(
+  windows: AvailabilityWindow[],
+  customNote?: string,
+  locale: SupportedLocale = getActiveLocale(),
+): string {
   if (windows.length === 0) {
-    return customNote?.trim() || 'A coordinar';
+    return customNote?.trim() || t('commonToCoordinate', locale);
   }
   const byDay = new Map<number, DayPeriod[]>();
   for (const w of windows) {
@@ -121,7 +146,7 @@ export function summarizeAvailability(windows: AvailabilityWindow[], customNote?
   }
   const parts: string[] = [];
   for (const [day, periods] of Array.from(byDay.entries()).sort((a, b) => a[0] - b[0])) {
-    parts.push(`${WEEKDAY_NAMES[day]} (${periods.map((p) => PERIOD_NAMES[p]).join(', ')})`);
+    parts.push(`${getWeekdayPluralName(day, locale)} (${periods.map((p) => getPeriodShortName(p, locale)).join(', ')})`);
   }
   const summary = parts.join(' · ');
   return customNote?.trim() ? `${summary} — ${customNote.trim()}` : summary;
@@ -134,13 +159,14 @@ function computeWallet(): CreditWallet {
   const sum = (xs: typeof entries) => xs.reduce((acc, e) => acc + e.amount, 0);
 
   const pendingHolds = pending.filter((e) => e.type === 'hold');
-  const heldInEscrow = -sum(pendingHolds);
-  const available = sum(posted) - heldInEscrow;
-  const incomingPending = sum(pending.filter((e) => e.amount > 0));
-  const earnedTotal = sum(posted.filter((e) => e.type === 'release'));
+  const heldInEscrow = -sum(pendingHolds) || 0;
+  const available = sum(posted) - heldInEscrow || 0;
+  const incomingPending = sum(pending.filter((e) => e.amount > 0)) || 0;
+  const earnedTotal = sum(posted.filter((e) => e.type === 'release')) || 0;
   const spentTotal =
-    -sum(posted.filter((e) => e.type === 'hold' || e.type === 'penalty')) -
-    sum(posted.filter((e) => e.type === 'refund'));
+    (-sum(posted.filter((e) => e.type === 'hold' || e.type === 'penalty')) -
+      sum(posted.filter((e) => e.type === 'refund'))) ||
+    0;
 
   return { available, heldInEscrow, incomingPending, earnedTotal, spentTotal, maxBalance: MAX_BALANCE, entries };
 }
@@ -148,7 +174,6 @@ function computeWallet(): CreditWallet {
 export function verifyWalletInvariants(
   wallet: CreditWallet,
   sessions: Session[],
-  monetaryPayments: MonetaryPayment[],
 ): LedgerIntegrityReport {
   const posted = wallet.entries.filter((e) => e.status === 'posted');
   const incentivesTotal = posted.filter((e) => e.type === 'incentive').reduce((acc, e) => acc + e.amount, 0);
@@ -159,10 +184,9 @@ export function verifyWalletInvariants(
 
   // Invariant 2: Double-entry conservation equation
   // available + heldInEscrow === incentives + earnedTotal + adjustments - spentTotal
-  const lhs = Math.round((wallet.available + wallet.heldInEscrow) * 100) / 100;
-  const rhs =
-    Math.round((incentivesTotal + wallet.earnedTotal + adjustmentsTotal - wallet.spentTotal) * 100) / 100;
-  const conservation = lhs === rhs;
+  const lhs = wallet.available + wallet.heldInEscrow;
+  const rhs = incentivesTotal + wallet.earnedTotal + adjustmentsTotal - wallet.spentTotal;
+  const conservation = Number.isInteger(lhs) && Number.isInteger(rhs) && lhs === rhs;
 
   // Invariant 3: Escrow parity with sessions
   const pendingHolds = wallet.entries.filter((e) => e.status === 'pending' && e.type === 'hold');
@@ -184,42 +208,51 @@ export function verifyWalletInvariants(
   const incentiveCount = wallet.entries.filter((e) => e.type === 'incentive').length;
   const idempotent = keys.length === uniqueKeys.size && incentiveCount <= 1;
 
-  // Invariant 5: Strictly separated monetary (ARS) circuit
-  const validMonetary = monetaryPayments.every((mp) => {
-    const ses = sessions.find((s) => s.id === mp.sessionId);
-    return mp.currency === 'ARS' && mp.amountCents > 0 && (!ses || ses.price.mode === 'money' || ses.price.mode === 'mixed');
-  });
+  // Invariant 5: Integer-only, non-cashable time-credits
+  const integerEntries = wallet.entries.every((e) => Number.isInteger(e.amount) && e.amount !== 0);
+  const integerBalances =
+    Number.isInteger(wallet.available) &&
+    Number.isInteger(wallet.heldInEscrow) &&
+    Number.isInteger(wallet.incomingPending);
+  const integerSessions = sessions.every((s) => Number.isInteger(s.creditAmount) && s.creditAmount >= 1);
+  const integerOnlyNonCashable = integerEntries && integerBalances && integerSessions;
 
   const invariants: LedgerInvariantCheck[] = [
     {
       id: 'non_negative_balance',
-      name: 'Saldo de créditos no negativo',
+      name: t('invNonNegName'),
       passed: nonNegative,
-      detail: `Disponible: ${wallet.available} cr (≥ 0)`,
+      detail: t('invNonNegDetail', { available: wallet.available }),
     },
     {
       id: 'double_entry_conservation',
-      name: 'Conservación por partida doble',
+      name: t('invConsName'),
       passed: conservation,
-      detail: `Disponible (${wallet.available}) + Custodia (${wallet.heldInEscrow}) = Incentivos (${incentivesTotal}) + Ganados (${wallet.earnedTotal}) − Usados (${wallet.spentTotal})`,
+      detail: t('invConsDetail', {
+        available: wallet.available,
+        held: wallet.heldInEscrow,
+        incentives: incentivesTotal,
+        earned: wallet.earnedTotal,
+        spent: wallet.spentTotal,
+      }),
     },
     {
       id: 'escrow_session_parity',
-      name: 'Paridad entre custodia y sesiones activas/en revisión',
+      name: t('invEscrowName'),
       passed: escrowMatchesSessions,
-      detail: `${pendingHolds.length} retención(es) activa(s) vinculadas a sesiones vigentes o en ventana de 48 h`,
+      detail: t('invEscrowDetail', { count: pendingHolds.length }),
     },
     {
       id: 'idempotency_uniqueness',
-      name: 'Idempotencia e incentivo inicial único',
+      name: t('invIdempName'),
       passed: idempotent,
-      detail: `${uniqueKeys.size} claves únicas · ${incentiveCount} incentivo inicial otorgado`,
+      detail: t('invIdempDetail', { keys: uniqueKeys.size, incentives: incentiveCount }),
     },
     {
-      id: 'separated_monetary_circuit',
-      name: 'Separación contable entre créditos y ARS',
-      passed: validMonetary,
-      detail: `${monetaryPayments.length} registro(s) en ARS en tabla separada (sin tasa de cambio fija)`,
+      id: 'integer_only_non_cashable_credits',
+      name: t('invIntName'),
+      passed: integerOnlyNonCashable,
+      detail: t('invIntDetail', { entries: wallet.entries.length, sessions: sessions.length }),
     },
   ];
 
@@ -247,6 +280,100 @@ export const mockRepository: Repository = {
     return db.CURRENT_USER_ID;
   },
 
+  async listSkills() {
+    await delay(60);
+    for (const custom of db.customSkills) {
+      registerCustomSkill(custom);
+    }
+    return [...SKILLS, ...db.customSkills].map((s) => ({ ...s }));
+  },
+
+  async createCustomSkill(userId, input) {
+    await delay(150);
+    const trimmedName = input.name.trim();
+    if (trimmedName.length < 2) {
+      throw new Error(t('repoErrCustomSkillName'));
+    }
+    if (!CATEGORIES.some((c) => c.id === input.categoryId)) {
+      throw new Error(t('repoErrCustomSkillCat'));
+    }
+    const foldSkillName = (value: string) =>
+      value.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const normalizedName = foldSkillName(trimmedName);
+    const existing = [...SKILLS, ...db.customSkills].find(
+      (s) =>
+        s.categoryId === input.categoryId &&
+        (foldSkillName(s.name) === normalizedName ||
+          (s.nameEn ? foldSkillName(s.nameEn) === normalizedName : false)),
+    );
+    if (existing) {
+      if (existing.isCustom) registerCustomSkill(existing);
+      return { ...existing };
+    }
+
+    const trimmedDesc = input.description?.trim() || undefined;
+    const created: Skill = {
+      id: `s-custom-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      categoryId: input.categoryId,
+      name: trimmedName,
+      nameEn: trimmedName,
+      description: trimmedDesc,
+      isCustom: true,
+      createdBy: userId,
+    };
+    db.customSkills.push(created);
+    registerCustomSkill(created);
+    return { ...created };
+  },
+
+  async listNeighborhoods() {
+    await delay(60);
+    return NEIGHBORHOODS.map((n) => ({ ...n }));
+  },
+
+  async verifyNeighborhoodAccess(userId, input) {
+    await delay(180);
+    const neighborhood = NEIGHBORHOODS.find((n) => n.id === input.neighborhoodId);
+    const record = db.NEIGHBORHOOD_ACCESS_RECORDS.find((r) => r.neighborhoodId === input.neighborhoodId);
+    if (!neighborhood || !record) {
+      throw new Error(t('repoErrNeighborhoodNotFound'));
+    }
+    if (!neighborhood.isActive || !record.isActive) {
+      throw new Error(t('repoErrNeighborhoodInactive', { name: neighborhood.name }));
+    }
+    const code = input.accessCode.trim();
+    if (!code) {
+      throw new Error(t('repoErrNeighborhoodCodeRequired'));
+    }
+    if (!record.codeHash || !verifySaltedSha256(neighborhood.id, code, record.salt, record.codeHash)) {
+      throw new Error(t('repoErrNeighborhoodCodeInvalid'));
+    }
+
+    const idx = db.profiles.findIndex((p) => p.id === userId);
+    if (idx < 0) throw new Error(t('repoErrProfileNotFound'));
+    const verifiedAt = new Date().toISOString();
+    const updated = {
+      ...db.profiles[idx]!,
+      neighborhoodId: neighborhood.id,
+      neighborhoodVerifiedAt: verifiedAt,
+    };
+    db.profiles[idx] = updated;
+    return {
+      ...updated,
+      skills: [...updated.skills],
+      availabilityWindows: updated.availabilityWindows ? [...updated.availabilityWindows] : undefined,
+    };
+  },
+
+  async listProfiles() {
+    await delay(80);
+    return db.profiles.map((p) => ({
+      ...p,
+      skills: [...p.skills],
+      availabilityWindows: p.availabilityWindows ? [...p.availabilityWindows] : undefined,
+    }));
+  },
+
   async getProfile(id) {
     await delay();
     const p = db.profiles.find((x) => x.id === id);
@@ -262,11 +389,23 @@ export const mockRepository: Repository = {
   async updateProfile(userId, input) {
     await delay(200);
     const idx = db.profiles.findIndex((p) => p.id === userId);
-    if (idx < 0) throw new Error('Perfil no encontrado');
+    if (idx < 0) throw new Error(t('repoErrProfileNotFound'));
+    const current = db.profiles[idx]!;
+    const nextAvatarUrl =
+      input.avatarUrl === null
+        ? undefined
+        : typeof input.avatarUrl === 'string'
+          ? input.avatarUrl.trim() || undefined
+          : current.avatarUrl;
+    const nextVerifiedAt =
+      input.neighborhoodVerifiedAt !== undefined ? input.neighborhoodVerifiedAt : current.neighborhoodVerifiedAt;
+
     const updated = {
-      ...db.profiles[idx]!,
+      ...current,
       displayName: input.displayName.trim(),
       neighborhoodId: input.neighborhoodId,
+      neighborhoodVerifiedAt: nextVerifiedAt,
+      avatarUrl: nextAvatarUrl,
       bio: input.bio.trim(),
       availabilitySummary: input.availabilitySummary.trim(),
       skills: [...input.skills],
@@ -276,14 +415,42 @@ export const mockRepository: Repository = {
     return { ...updated, skills: [...updated.skills] };
   },
 
+  async uploadProfilePhoto(userId, asset) {
+    await delay(220);
+    const idx = db.profiles.findIndex((p) => p.id === userId);
+    if (idx < 0) throw new Error(t('repoErrProfileNotFound'));
+    const validation = validateProfilePhotoAsset(asset);
+    if (!validation.valid) {
+      throw new Error(t(validation.errorKey));
+    }
+    const cleanUri = asset.uri.trim();
+    db.profiles[idx] = {
+      ...db.profiles[idx]!,
+      avatarUrl: cleanUri,
+    };
+    return cleanUri;
+  },
+
+  async removeProfilePhoto(userId) {
+    await delay(150);
+    const idx = db.profiles.findIndex((p) => p.id === userId);
+    if (idx < 0) throw new Error(t('repoErrProfileNotFound'));
+    db.profiles[idx] = {
+      ...db.profiles[idx]!,
+      avatarUrl: undefined,
+    };
+  },
+
   async updateAvailability(userId, input) {
     await delay(200);
     const idx = db.profiles.findIndex((p) => p.id === userId);
-    if (idx < 0) throw new Error('Perfil no encontrado');
-    const summary = summarizeAvailability(input.windows, input.customNote);
+    if (idx < 0) throw new Error(t('repoErrProfileNotFound'));
+    const customNote = input.customNote?.trim() || undefined;
+    const summary = summarizeAvailability(input.windows, customNote);
     const updated = {
       ...db.profiles[idx]!,
       availabilityWindows: [...input.windows],
+      availabilityNote: customNote,
       availabilitySummary: summary,
     };
     db.profiles[idx] = updated;
@@ -292,13 +459,16 @@ export const mockRepository: Repository = {
 
   async submitEligibility(userId, input) {
     await delay(200);
+    if (!isValidBirthDate(input.birthYear, input.birthMonth, input.birthDay)) {
+      throw new Error(t('eligInvalidDate'));
+    }
     const age = calculateAge(input.birthYear, input.birthMonth, input.birthDay);
     if (!input.acceptedSafetyRules) {
       return {
         status: 'pending_eligibility',
         age,
         eligible: false,
-        message: 'Debés aceptar las normas de convivencia y seguridad de la comunidad.',
+        message: t('repoErrEligAcceptRules'),
       };
     }
     if (age < 13) {
@@ -306,7 +476,7 @@ export const mockRepository: Repository = {
         status: 'restricted',
         age,
         eligible: false,
-        message: 'Por razones legales y de seguridad, la plataforma no admite registros de menores de 13 años.',
+        message: t('repoErrEligUnder13'),
       };
     }
     if (age < MIN_PILOT_AGE) {
@@ -314,8 +484,7 @@ export const mockRepository: Repository = {
         status: 'restricted',
         age,
         eligible: false,
-        message:
-          'Durante el piloto inicial en Santo Tomás, la participación está habilitada para mayores de 18 años. Tu solicitud con consentimiento parental queda registrada en estado restringido hasta su habilitación.',
+        message: t('repoErrEligMinorPilot'),
       };
     }
     const idx = db.profiles.findIndex((p) => p.id === userId);
@@ -326,7 +495,7 @@ export const mockRepository: Repository = {
       status: 'active',
       age,
       eligible: true,
-      message: 'Elegibilidad verificada (+18).',
+      message: t('repoEligVerified'),
     };
   },
 
@@ -341,7 +510,6 @@ export const mockRepository: Repository = {
       if (a.status !== 'published') return false;
       if (blocked.has(a.instructorId)) return false;
       if (filters.categoryId && categoryOfSkill(a.skillId)?.id !== filters.categoryId) return false;
-      if (filters.paymentMode && a.payment.mode !== filters.paymentMode) return false;
       if (filters.format && a.format !== 'either' && a.format !== filters.format) return false;
 
       const instructor = db.profiles.find((p) => p.id === a.instructorId);
@@ -354,7 +522,11 @@ export const mockRepository: Repository = {
       }
 
       if (q) {
-        const haystack = `${a.title} ${a.description} ${skillName(a.skillId)} ${instructor?.displayName ?? ''}`.toLowerCase();
+        const skill = getSkill(a.skillId);
+        const cat = categoryOfSkill(a.skillId);
+        const catEs = cat ? categoryName(cat.id, 'es-AR') : '';
+        const catEn = cat ? categoryName(cat.id, 'en') : '';
+        const haystack = `${a.title} ${a.description} ${skillName(a.skillId, 'es-AR')} ${skillName(a.skillId, 'en')} ${skill?.description ?? ''} ${catEs} ${catEn} ${instructor?.displayName ?? ''}`.toLowerCase();
         if (!haystack.includes(q)) return false;
       }
       return true;
@@ -376,16 +548,14 @@ export const mockRepository: Repository = {
     const title = input.title.trim();
     const description = input.description.trim();
     const meetingArea = input.meetingArea.trim();
-    if (title.length < 4) throw new Error('El título debe tener al menos 4 caracteres.');
-    if (description.length < 10) throw new Error('La descripción debe tener al menos 10 caracteres.');
-    if (meetingArea.length < 3) throw new Error('Indicá un punto de encuentro público o modalidad.');
+    if (title.length < 4) throw new Error(t('repoErrTitleMin'));
+    if (description.length < 10) throw new Error(t('repoErrDescMin'));
+    if (meetingArea.length < 3) throw new Error(t('repoErrMeetingArea'));
     if (/mi casa|domicilio particular|depto|departamento/i.test(meetingArea)) {
-      throw new Error(
-        'Por seguridad comunitaria, nunca publiques un domicilio particular. Elegí un espacio público (plaza, biblioteca, club, centro cultural) o modalidad online.',
-      );
+      throw new Error(t('repoErrPrivateAddress'));
     }
 
-    const payment = validatePaymentArrangement(input.payment);
+    const creditAmount = validateCreditAmount(input.creditAmount);
 
     // Ensure the instructor profile lists this skill under 'offers'
     const profIdx = db.profiles.findIndex((p) => p.id === instructorId);
@@ -399,7 +569,7 @@ export const mockRepository: Repository = {
 
     if (input.id) {
       const idx = db.activities.findIndex((a) => a.id === input.id && a.instructorId === instructorId);
-      if (idx < 0) throw new Error('Actividad no encontrada.');
+      if (idx < 0) throw new Error(t('repoErrActivityNotFound'));
       const updated: Activity = {
         ...db.activities[idx]!,
         skillId: input.skillId,
@@ -408,9 +578,9 @@ export const mockRepository: Repository = {
         durationMin: input.durationMin,
         format: input.format,
         meetingArea,
-        requirements: input.requirements.trim() || 'Ninguno',
-        availabilitySummary: input.availabilitySummary.trim() || 'A coordinar',
-        payment,
+        requirements: input.requirements.trim() || t('commonNone'),
+        availabilitySummary: input.availabilitySummary.trim() || t('commonToCoordinate'),
+        creditAmount,
         status: input.status,
       };
       db.activities[idx] = updated;
@@ -426,9 +596,9 @@ export const mockRepository: Repository = {
       durationMin: input.durationMin,
       format: input.format,
       meetingArea,
-      requirements: input.requirements.trim() || 'Ninguno',
-      availabilitySummary: input.availabilitySummary.trim() || 'A coordinar',
-      payment,
+      requirements: input.requirements.trim() || t('commonNone'),
+      availabilitySummary: input.availabilitySummary.trim() || t('commonToCoordinate'),
+      creditAmount,
       status: input.status,
     };
     db.activities.unshift(created);
@@ -442,7 +612,7 @@ export const mockRepository: Repository = {
         type: 'incentive',
         amount: 2,
         idempotencyKey: `incentive:${instructorId}`,
-        memo: 'Incentivo de participación: publicaste tu primera actividad en la comunidad',
+        memo: t('repoIncentiveMemo'),
         createdAt: new Date().toISOString(),
         status: 'posted',
       });
@@ -506,19 +676,20 @@ export const mockRepository: Repository = {
   async requestSession(userId, input) {
     await delay(250);
     const activity = db.activities.find((a) => a.id === input.activityId);
-    if (!activity) throw new Error('Actividad no encontrada');
+    if (!activity) throw new Error(t('repoErrActivityNotFound'));
     if (activity.instructorId === userId) {
-      throw new Error('No podés reservar tu propia actividad.');
+      throw new Error(t('repoErrBookOwn'));
     }
 
-    const creditCost = activity.payment.mode !== 'money' ? (activity.payment.creditAmount ?? 0) : 0;
-    if (creditCost > 0) {
-      const wallet = computeWallet();
-      if (wallet.available < creditCost) {
-        throw new Error(
-          `Saldo insuficiente: esta actividad requiere ${creditCost} crédito(s) y tenés ${wallet.available} disponible(s). ¡Enseñá una actividad para sumar créditos!`,
-        );
-      }
+    const creditCost = validateCreditAmount(activity.creditAmount);
+    const wallet = computeWallet();
+    if (wallet.available < creditCost) {
+      throw new Error(
+        t('repoErrInsufficientCredits', {
+          cost: formatCredits(creditCost),
+          available: formatCredits(wallet.available),
+        }),
+      );
     }
 
     const nowIso = new Date().toISOString();
@@ -532,41 +703,21 @@ export const mockRepository: Repository = {
       startsAt: input.startsAt,
       endsAt,
       state: 'requested',
-      price: { ...activity.payment },
+      creditAmount: creditCost,
       learnerNote: input.learnerNote?.trim() || undefined,
     };
     db.sessions.unshift(newSession);
 
-    if (creditCost > 0) {
-      db.ledger.unshift({
-        id: `tx-${Date.now()}`,
-        type: 'hold',
-        amount: -creditCost,
-        sessionId: newSession.id,
-        idempotencyKey: `hold:${newSession.id}`,
-        memo: `${activity.title}: retenido en custodia hasta completar la sesión`,
-        createdAt: nowIso,
-        status: 'pending',
-      });
-    }
-
-    // Separate accounting record for 'money' and 'mixed' payment modes
-    const moneyCents = activity.payment.mode !== 'credits' ? (activity.payment.moneyAmountCents ?? 0) : 0;
-    if (moneyCents > 0) {
-      db.monetaryPayments.unshift({
-        id: `mp-${Date.now()}`,
-        sessionId: newSession.id,
-        activityTitle: activity.title,
-        payerId: userId,
-        payeeId: activity.instructorId,
-        amountCents: moneyCents,
-        currency: 'ARS',
-        method: 'cash_or_transfer',
-        status: 'pending',
-        createdAt: nowIso,
-        updatedAt: nowIso,
-      });
-    }
+    db.ledger.unshift({
+      id: `tx-${Date.now()}`,
+      type: 'hold',
+      amount: -creditCost,
+      sessionId: newSession.id,
+      idempotencyKey: `hold:${newSession.id}`,
+      memo: t('repoHoldMemo', { title: activity.title }),
+      createdAt: nowIso,
+      status: 'pending',
+    });
 
     return newSession;
   },
@@ -574,13 +725,13 @@ export const mockRepository: Repository = {
   async respondToSession(userId, input) {
     await delay(200);
     const idx = db.sessions.findIndex((s) => s.id === input.sessionId);
-    if (idx < 0) throw new Error('Sesión no encontrada.');
+    if (idx < 0) throw new Error(t('repoErrSessionNotFound'));
     const s = db.sessions[idx]!;
     if (s.instructorId !== userId) {
-      throw new Error('Solo el instructor puede confirmar o rechazar una solicitud.');
+      throw new Error(t('repoErrOnlyInstructorRespond'));
     }
     if (s.state !== 'requested') {
-      throw new Error('Esta sesión ya no está pendiente de confirmación.');
+      throw new Error(t('repoErrSessionNotPending'));
     }
 
     if (input.decision === 'confirm') {
@@ -589,7 +740,7 @@ export const mockRepository: Repository = {
       return updated;
     }
 
-    // Declined -> refund any held credits and void any pending monetary payment record
+    // Declined -> refund held credits
     const updated: Session = { ...s, state: 'declined' };
     db.sessions[idx] = updated;
     const holdIdx = db.ledger.findIndex((e) => e.sessionId === s.id && e.type === 'hold' && e.status === 'pending');
@@ -602,18 +753,16 @@ export const mockRepository: Repository = {
         amount: Math.abs(hold.amount),
         sessionId: s.id,
         idempotencyKey: `refund:${s.id}`,
-        memo: 'Reintegro: el instructor no pudo tomar la solicitud',
+        memo: t('repoRefundDeclined'),
         createdAt: new Date().toISOString(),
         status: 'posted',
       });
     }
-    const mpIdx = db.monetaryPayments.findIndex((mp) => mp.sessionId === s.id);
-    if (mpIdx >= 0) {
-      db.monetaryPayments[mpIdx] = {
-        ...db.monetaryPayments[mpIdx]!,
-        status: 'refunded',
-        updatedAt: new Date().toISOString(),
-      };
+    const relIdx = db.ledger.findIndex(
+      (e) => e.sessionId === s.id && e.type === 'release' && e.status === 'pending',
+    );
+    if (relIdx >= 0) {
+      db.ledger.splice(relIdx, 1);
     }
     return updated;
   },
@@ -621,13 +770,13 @@ export const mockRepository: Repository = {
   async cancelSession(userId, input) {
     await delay(200);
     const idx = db.sessions.findIndex((s) => s.id === input.sessionId);
-    if (idx < 0) throw new Error('Sesión no encontrada.');
+    if (idx < 0) throw new Error(t('repoErrSessionNotFound'));
     const s = db.sessions[idx]!;
     if (s.learnerId !== userId && s.instructorId !== userId) {
-      throw new Error('No sos participante de esta sesión.');
+      throw new Error(t('repoErrNotParticipant'));
     }
     if (s.state !== 'requested' && s.state !== 'confirmed') {
-      throw new Error('Solo se pueden cancelar sesiones solicitadas o confirmadas.');
+      throw new Error(t('repoErrCancelState'));
     }
 
     const hoursUntilStart = (new Date(s.startsAt).getTime() - Date.now()) / 3_600_000;
@@ -642,20 +791,19 @@ export const mockRepository: Repository = {
     const updated: Session = {
       ...s,
       state: 'cancelled',
-      cancellationReason: input.reason.trim() || 'Cancelada por participante',
+      cancellationReason: input.reason.trim() || t('repoDefaultCancelReason'),
       cancellationTiming: isTimely ? 'timely' : 'late_review_window',
       reviewWindowEndsAt,
     };
     db.sessions[idx] = updated;
 
-    // Update monetary payment record if present
-    const mpIdx = db.monetaryPayments.findIndex((mp) => mp.sessionId === s.id);
-    if (mpIdx >= 0) {
-      db.monetaryPayments[mpIdx] = {
-        ...db.monetaryPayments[mpIdx]!,
-        status: isTimely ? 'refunded' : 'disputed',
-        updatedAt: new Date().toISOString(),
-      };
+    if (isTimely) {
+      const relIdx = db.ledger.findIndex(
+        (e) => e.sessionId === s.id && e.type === 'release' && e.status === 'pending',
+      );
+      if (relIdx >= 0) {
+        db.ledger.splice(relIdx, 1);
+      }
     }
 
     const holdIdx = db.ledger.findIndex((e) => e.sessionId === s.id && e.type === 'hold' && e.status === 'pending');
@@ -669,35 +817,30 @@ export const mockRepository: Repository = {
           amount: Math.abs(hold.amount),
           sessionId: s.id,
           idempotencyKey: `refund:${s.id}`,
-          memo: cancelledByInstructor
-            ? 'Reintegro total: el instructor canceló la sesión'
-            : 'Reintegro total: cancelaste con más de 24 h de anticipación',
+          memo: cancelledByInstructor ? t('repoRefundInstructorCancel') : t('repoRefundTimelyCancel'),
           createdAt: new Date().toISOString(),
           status: 'posted',
         });
         return {
           session: updated,
-          refundMessage: `Se reintegraron ${Math.abs(hold.amount)} crédito(s) a tu saldo disponible.`,
+          refundMessage: t('repoCancelTimelyMsg', { credits: formatCredits(Math.abs(hold.amount)) }),
         };
       } else {
         // Late cancellation: keep in pending state for the 48h objection / administrative review window
         db.ledger[holdIdx] = {
           ...hold,
-          memo: `${hold.memo} (cancelación con <24 h: en ventana de revisión de 48 h)`,
+          memo: t('repoCancelLateHoldMemo', { memo: hold.memo }),
         };
         return {
           session: updated,
-          refundMessage:
-            'Cancelación con menos de 24 h: los créditos permanecen en custodia durante la ventana de revisión de 48 h (sin penalidad automática irreversible). Podés presentar un descargo por fuerza mayor.',
+          refundMessage: t('repoCancelLateMsg'),
         };
       }
     }
 
     return {
       session: updated,
-      refundMessage: isTimely
-        ? 'La sesión fue cancelada a término sin cargos.'
-        : 'Cancelación registrada dentro de las 24 h previas: se abrió la ventana de revisión de 48 h.',
+      refundMessage: isTimely ? t('repoCancelTimelyNoHold') : t('repoCancelLateNoHold'),
     };
   },
 
@@ -705,13 +848,22 @@ export const mockRepository: Repository = {
     await delay(200);
     const reason = input.reason.trim();
     if (reason.length < 6) {
-      throw new Error('Describí brevemente el motivo de fuerza mayor o imprevisto (al menos 6 caracteres).');
+      throw new Error(t('repoErrObjectionMin'));
     }
     const idx = db.sessions.findIndex((s) => s.id === input.sessionId);
-    if (idx < 0) throw new Error('Sesión no encontrada.');
+    if (idx < 0) throw new Error(t('repoErrSessionNotFound'));
     const s = db.sessions[idx]!;
     if (s.learnerId !== userId && s.instructorId !== userId) {
-      throw new Error('No sos participante de esta sesión.');
+      throw new Error(t('repoErrNotParticipant'));
+    }
+    if (db.disputes.some((d) => d.sessionId === s.id && d.status === 'open')) {
+      throw new Error(t('repoErrObjectionDuplicate'));
+    }
+    if (s.state !== 'cancelled' || s.cancellationTiming !== 'late_review_window') {
+      throw new Error(t('repoErrObjectionInvalidState'));
+    }
+    if (s.reviewWindowEndsAt && new Date(s.reviewWindowEndsAt).getTime() < Date.now()) {
+      throw new Error(t('repoErrObjectionWindowExpired'));
     }
 
     const nowIso = new Date().toISOString();
@@ -729,7 +881,7 @@ export const mockRepository: Repository = {
       const hold = db.ledger[holdIdx]!;
       db.ledger[holdIdx] = {
         ...hold,
-        memo: `${hold.memo.split(' (')[0]} (descargo presentado · en revisión administrativa sin penalidad automática)`,
+        memo: t('repoObjectionHoldMemo', { base: hold.memo.split(' (')[0] }),
       };
     }
 
@@ -739,11 +891,11 @@ export const mockRepository: Repository = {
       db.disputes.unshift({
         id: `disp-${Date.now()}`,
         sessionId: s.id,
-        activityTitle: activity?.title ?? 'Sesión comunitaria',
+        activityTitle: activity?.title ?? t('repoDefaultCommunitySession'),
         openedBy: userId,
         learnerId: s.learnerId,
         instructorId: s.instructorId,
-        creditAmount: s.price.creditAmount ?? 0,
+        creditAmount: s.creditAmount,
         reason,
         status: 'open',
         createdAt: nowIso,
@@ -754,8 +906,8 @@ export const mockRepository: Repository = {
       id: `notif-${Date.now()}`,
       userId: db.CURRENT_USER_ID,
       type: 'dispute_opened',
-      title: 'Descargo por fuerza mayor en revisión',
-      body: `Tu descargo para «${activity?.title ?? 'Sesión'}» quedó registrado sin penalidad automática.`,
+      title: t('repoNotifDisputeTitle'),
+      body: t('repoNotifDisputeBody', { title: activity?.title ?? t('navSession') }),
       sessionId: s.id,
       actorId: userId,
       createdAt: nowIso,
@@ -767,15 +919,15 @@ export const mockRepository: Repository = {
   async issueSessionToken(userId, input) {
     await delay(150);
     const s = db.sessions.find((x) => x.id === input.sessionId);
-    if (!s) throw new Error('Sesión no encontrada.');
+    if (!s) throw new Error(t('repoErrSessionNotFound'));
     if (s.learnerId !== userId && s.instructorId !== userId) {
-      throw new Error('Solo los participantes de la sesión pueden emitir un código QR de asistencia.');
+      throw new Error(t('repoErrQrParticipantsOnly'));
     }
     if (input.phase === 'check_in' && s.state !== 'confirmed') {
-      throw new Error('El check-in de inicio requiere que la sesión esté en estado «Confirmada».');
+      throw new Error(t('repoErrQrNeedConfirmed'));
     }
     if (input.phase === 'check_out' && s.state !== 'in_progress') {
-      throw new Error('El check-out de cierre requiere haber completado primero el check-in («En curso»).');
+      throw new Error(t('repoErrQrNeedInProgress'));
     }
 
     const code = generateVerificationCode();
@@ -800,39 +952,50 @@ export const mockRepository: Repository = {
   async redeemSessionToken(userId, input) {
     await delay(200);
     const idx = db.sessions.findIndex((x) => x.id === input.sessionId);
-    if (idx < 0) throw new Error('Sesión no encontrada.');
+    if (idx < 0) throw new Error(t('repoErrSessionNotFound'));
     const s = db.sessions[idx]!;
     if (s.learnerId !== userId && s.instructorId !== userId) {
-      throw new Error('No sos participante de esta sesión.');
+      throw new Error(t('repoErrNotParticipant'));
     }
 
     const normalizedCode = input.code.trim().toUpperCase();
     if (normalizedCode.length < 4) {
-      throw new Error('Ingresá el código de 6 caracteres o escaneá el QR de la contraparte.');
+      throw new Error(t('repoErrQrCodeFormat'));
     }
 
     const tokIdx = db.verificationTokens.findIndex(
-      (t) => t.sessionId === s.id && t.phase === input.phase && t.code === normalizedCode && !t.usedAt,
+      (tok) => tok.sessionId === s.id && tok.phase === input.phase && tok.code === normalizedCode && !tok.usedAt,
     );
-    if (tokIdx >= 0) {
-      const tok = db.verificationTokens[tokIdx]!;
-      if (new Date(tok.expiresAt).getTime() < Date.now()) {
-        throw new Error('El código QR expiró (vigencia máxima: 90 segundos). Emití uno nuevo.');
-      }
-      db.verificationTokens[tokIdx] = {
-        ...tok,
-        usedAt: new Date().toISOString(),
-        usedBy: userId,
-      };
+    if (tokIdx < 0) {
+      throw new Error(t('repoErrQrInvalidOrUsed'));
+    }
+    const tok = db.verificationTokens[tokIdx]!;
+    if (new Date(tok.expiresAt).getTime() < Date.now()) {
+      throw new Error(t('repoErrQrExpired'));
+    }
+    if (tok.issuerId === userId) {
+      throw new Error(t('repoErrQrSelfRedeem'));
+    }
+    if (input.phase !== 'check_in' && input.phase !== 'check_out') {
+      throw new Error(t('repoErrQrInvalidOrUsed'));
+    }
+    if (input.phase === 'check_in' && s.state !== 'confirmed') {
+      throw new Error(t('repoErrQrCheckInState'));
+    }
+    if (input.phase === 'check_out' && s.state !== 'in_progress') {
+      throw new Error(t('repoErrQrNeedCheckInFirst'));
     }
 
     const nowIso = new Date().toISOString();
+    db.verificationTokens[tokIdx] = {
+      ...tok,
+      usedAt: nowIso,
+      usedBy: userId,
+    };
+
     const activity = db.activities.find((a) => a.id === s.activityId);
 
     if (input.phase === 'check_in') {
-      if (s.state !== 'confirmed') {
-        throw new Error('La sesión debe estar «Confirmada» para realizar el check-in.');
-      }
       const updated: Session = {
         ...s,
         state: 'in_progress',
@@ -842,15 +1005,11 @@ export const mockRepository: Repository = {
       return {
         session: updated,
         releasedCredits: 0,
-        message: 'Check-in de inicio verificado (Etapa 1/2). La sesión ahora está «En curso».',
+        message: t('repoQrCheckInMsg'),
       };
     }
 
     // Phase 2: check_out -> complete session and atomically release credit escrow
-    if (s.state !== 'in_progress') {
-      throw new Error('Primero deben verificar el check-in de inicio antes del cierre.');
-    }
-
     const updated: Session = {
       ...s,
       state: 'completed',
@@ -858,7 +1017,7 @@ export const mockRepository: Repository = {
     };
     db.sessions[idx] = updated;
 
-    const creditAmount = s.price.mode !== 'money' ? (s.price.creditAmount ?? 0) : 0;
+    const creditAmount = s.creditAmount;
 
     // 1. If viewer is learner, settle their pending 'hold' -> 'posted'
     const holdIdx = db.ledger.findIndex((e) => e.sessionId === s.id && e.type === 'hold' && e.status === 'pending');
@@ -867,7 +1026,7 @@ export const mockRepository: Repository = {
       db.ledger[holdIdx] = {
         ...hold,
         status: 'posted',
-        memo: `${activity?.title ?? 'Sesión'}: asistencia verificada en 2 etapas (transferido al instructor)`,
+        memo: t('repoQrHoldSettledMemo', { title: activity?.title ?? t('navSession') }),
       };
     }
 
@@ -879,7 +1038,7 @@ export const mockRepository: Repository = {
         ...rel,
         status: 'posted',
         createdAt: nowIso,
-        memo: `Enseñaste «${activity?.title ?? 'Sesión'}» (verificado con QR en 2 etapas)`,
+        memo: t('repoQrReleaseMemo', { title: activity?.title ?? t('navSession') }),
       };
     } else if (s.instructorId === db.CURRENT_USER_ID && creditAmount > 0) {
       db.ledger.unshift({
@@ -888,7 +1047,7 @@ export const mockRepository: Repository = {
         amount: creditAmount,
         sessionId: s.id,
         idempotencyKey: `release:${s.id}`,
-        memo: `Enseñaste «${activity?.title ?? 'Sesión'}» (verificado con QR en 2 etapas)`,
+        memo: t('repoQrReleaseMemo', { title: activity?.title ?? t('navSession') }),
         createdAt: nowIso,
         status: 'posted',
       });
@@ -911,11 +1070,14 @@ export const mockRepository: Repository = {
       id: `notif-${Date.now()}`,
       userId: db.CURRENT_USER_ID,
       type: creditAmount > 0 ? 'credit_released' : 'session_completed',
-      title: 'Sesión completada y verificada',
+      title: t('repoNotifCompletedTitle'),
       body:
         creditAmount > 0
-          ? `Se verificó el cierre de «${activity?.title ?? 'Sesión'}» y se liberaron ${creditAmount} crédito(s) de la custodia.`
-          : `Se verificó el cierre de «${activity?.title ?? 'Sesión'}». ¡Ya podés dejar tu reseña verificada!`,
+          ? t('repoNotifCompletedBodyCredits', {
+              title: activity?.title ?? t('navSession'),
+              credits: formatCredits(creditAmount),
+            })
+          : t('repoNotifCompletedBodyReview', { title: activity?.title ?? t('navSession') }),
       sessionId: s.id,
       createdAt: nowIso,
     });
@@ -925,8 +1087,8 @@ export const mockRepository: Repository = {
       releasedCredits: creditAmount,
       message:
         creditAmount > 0
-          ? `Check-out verificado (Etapa 2/2). ¡Sesión completada! Se liberaron de forma atómica ${creditAmount} crédito(s) al instructor.`
-          : 'Check-out verificado (Etapa 2/2). ¡Sesión completada!',
+          ? t('repoQrCheckOutMsgCredits', { credits: formatCredits(creditAmount) })
+          : t('repoQrCheckOutMsgSimple'),
     };
   },
 
@@ -938,55 +1100,7 @@ export const mockRepository: Repository = {
   async getLedgerIntegrity(): Promise<LedgerIntegrityReport> {
     await delay(100);
     const wallet = computeWallet();
-    return verifyWalletInvariants(wallet, db.sessions, db.monetaryPayments);
-  },
-
-  async listMonetaryPayments(userId) {
-    await delay(120);
-    return db.monetaryPayments
-      .filter((mp) => mp.payerId === userId || mp.payeeId === userId)
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  },
-
-  async getMonetaryPaymentBySession(sessionId) {
-    await delay(100);
-    return db.monetaryPayments.find((mp) => mp.sessionId === sessionId) ?? null;
-  },
-
-  async reportMonetaryPayment(userId, input) {
-    await delay(200);
-    const idx = db.monetaryPayments.findIndex((mp) => mp.sessionId === input.sessionId);
-    if (idx < 0) throw new Error('No se encontró un registro de pago en ARS para esta sesión.');
-    const mp = db.monetaryPayments[idx]!;
-    if (mp.payerId !== userId) {
-      throw new Error('Solo quien toma la actividad puede informar el envío del pago en ARS.');
-    }
-    const updated: MonetaryPayment = {
-      ...mp,
-      method: input.method,
-      status: 'reported_by_payer',
-      externalRef: input.externalRef?.trim() || undefined,
-      updatedAt: new Date().toISOString(),
-    };
-    db.monetaryPayments[idx] = updated;
-    return updated;
-  },
-
-  async confirmMonetaryPayment(userId, input) {
-    await delay(200);
-    const idx = db.monetaryPayments.findIndex((mp) => mp.sessionId === input.sessionId);
-    if (idx < 0) throw new Error('No se encontró un registro de pago en ARS para esta sesión.');
-    const mp = db.monetaryPayments[idx]!;
-    if (mp.payeeId !== userId) {
-      throw new Error('Solo el instructor puede confirmar la recepción del pago en ARS.');
-    }
-    const updated: MonetaryPayment = {
-      ...mp,
-      status: 'confirmed_by_payee',
-      updatedAt: new Date().toISOString(),
-    };
-    db.monetaryPayments[idx] = updated;
-    return updated;
+    return verifyWalletInvariants(wallet, db.sessions);
   },
 
   async listReviewsAbout(userId) {
@@ -1002,20 +1116,20 @@ export const mockRepository: Repository = {
   async submitReview(userId, input) {
     await delay(200);
     const s = db.sessions.find((x) => x.id === input.sessionId);
-    if (!s) throw new Error('Sesión no encontrada.');
+    if (!s) throw new Error(t('repoErrSessionNotFound'));
     if (s.learnerId !== userId && s.instructorId !== userId) {
-      throw new Error('Solo los participantes de la sesión pueden dejar una reseña.');
+      throw new Error(t('repoErrReviewParticipantsOnly'));
     }
     if (s.state !== 'completed') {
-      throw new Error('Solo se pueden reseñar sesiones completadas y verificadas.');
+      throw new Error(t('repoErrReviewCompletedOnly'));
     }
     const existing = db.reviews.find((r) => r.sessionId === s.id && r.authorId === userId);
     if (existing) {
-      throw new Error('Ya publicaste una reseña verificada para esta sesión.');
+      throw new Error(t('repoErrReviewDuplicate'));
     }
     const comment = input.comment.trim();
     if (comment.length < 4) {
-      throw new Error('Escribí un breve comentario sobre la experiencia (al menos 4 caracteres).');
+      throw new Error(t('repoErrReviewCommentMin'));
     }
 
     const subjectId = s.instructorId === userId ? s.learnerId : s.instructorId;
@@ -1072,14 +1186,18 @@ export const mockRepository: Repository = {
 
   async resolveDispute(moderatorId, input) {
     await delay(200);
-    const idx = db.disputes.findIndex((d) => d.id === input.disputeId);
-    if (idx < 0) throw new Error('Disputa no encontrada.');
-    const d = db.disputes[idx]!;
-    if (d.status !== 'open') {
-      throw new Error('Esta disputa ya fue resuelta.');
+    if (input.resolution !== 'resolved_refund' && input.resolution !== 'resolved_release') {
+      throw new Error(t('repoErrInvalidDisputeResolution'));
     }
 
-    const note = input.resolutionNote.trim() || 'Resuelta por moderación comunitaria';
+    const idx = db.disputes.findIndex((d) => d.id === input.disputeId);
+    if (idx < 0) throw new Error(t('repoErrDisputeNotFound'));
+    const d = db.disputes[idx]!;
+    if (d.status !== 'open') {
+      throw new Error(t('repoErrDisputeAlreadyResolved'));
+    }
+
+    const note = input.resolutionNote.trim() || t('repoDefaultModerationNote');
     const nowIso = new Date().toISOString();
     const updatedDispute: DisputeRecord = {
       ...d,
@@ -1091,6 +1209,7 @@ export const mockRepository: Repository = {
     db.disputes[idx] = updatedDispute;
 
     const sesIdx = db.sessions.findIndex((s) => s.id === d.sessionId);
+    const ses = sesIdx >= 0 ? db.sessions[sesIdx] : undefined;
     if (sesIdx >= 0) {
       db.sessions[sesIdx] = {
         ...db.sessions[sesIdx]!,
@@ -1098,13 +1217,22 @@ export const mockRepository: Repository = {
       };
     }
 
-    // Settle any pending hold in the ledger according to the resolution
+    // Settle any pending hold and/or pending release in the ledger independently
     const holdIdx = db.ledger.findIndex(
       (e) => e.sessionId === d.sessionId && e.type === 'hold' && e.status === 'pending',
     );
+    const initialRelIdx = db.ledger.findIndex(
+      (e) => e.sessionId === d.sessionId && e.type === 'release' && e.status === 'pending',
+    );
+    const absAmount =
+      holdIdx >= 0
+        ? Math.abs(db.ledger[holdIdx]!.amount)
+        : initialRelIdx >= 0
+          ? Math.abs(db.ledger[initialRelIdx]!.amount)
+          : d.creditAmount || ses?.creditAmount || 1;
+
     if (holdIdx >= 0) {
       const hold = db.ledger[holdIdx]!;
-      const absAmount = Math.abs(hold.amount);
       db.ledger[holdIdx] = { ...hold, status: 'posted' };
 
       if (input.resolution === 'resolved_refund') {
@@ -1114,31 +1242,48 @@ export const mockRepository: Repository = {
           amount: absAmount,
           sessionId: d.sessionId,
           idempotencyKey: `refund:dispute:${d.id}`,
-          memo: `Reintegro 100% por resolución de disputa: ${note}`,
-          createdAt: nowIso,
-          status: 'posted',
-        });
-      } else if (input.resolution === 'resolved_split') {
-        const half = Math.round((absAmount / 2) * 100) / 100;
-        db.ledger.unshift({
-          id: `tx-disp-split-${Date.now()}`,
-          type: 'refund',
-          amount: half,
-          sessionId: d.sessionId,
-          idempotencyKey: `refund:dispute:${d.id}`,
-          memo: `Reintegro parcial (50%) por acuerdo de moderación: ${note}`,
+          memo: t('repoDisputeRefundMemo', { note }),
           createdAt: nowIso,
           status: 'posted',
         });
       }
     }
 
+    const relIdx = db.ledger.findIndex(
+      (e) => e.sessionId === d.sessionId && e.type === 'release' && e.status === 'pending',
+    );
+
+    if (input.resolution === 'resolved_release') {
+      if (relIdx >= 0) {
+        const rel = db.ledger[relIdx]!;
+        db.ledger[relIdx] = {
+          ...rel,
+          status: 'posted',
+          createdAt: nowIso,
+          memo: t('repoDisputeReleaseMemo', { note }),
+        };
+      } else if (d.instructorId === db.CURRENT_USER_ID) {
+        db.ledger.unshift({
+          id: `tx-disp-rel-${Date.now()}`,
+          type: 'release',
+          amount: absAmount,
+          sessionId: d.sessionId,
+          idempotencyKey: `release:dispute:${d.id}`,
+          memo: t('repoDisputeReleaseMemo', { note }),
+          createdAt: nowIso,
+          status: 'posted',
+        });
+      }
+    } else if (input.resolution === 'resolved_refund' && relIdx >= 0) {
+      db.ledger.splice(relIdx, 1);
+    }
+
     db.notifications.unshift({
       id: `notif-${Date.now()}`,
       userId: db.CURRENT_USER_ID,
       type: 'dispute_resolved',
-      title: 'Revisión administrativa completada',
-      body: `Se resolvió el caso de «${d.activityTitle}»: ${note}`,
+      title: t('repoNotifDisputeResolvedTitle'),
+      body: t('repoNotifDisputeResolvedBody', { title: d.activityTitle, note }),
       sessionId: d.sessionId,
       actorId: moderatorId,
       createdAt: nowIso,
@@ -1155,7 +1300,7 @@ export const mockRepository: Repository = {
   async resolveSafetyReport(_moderatorId, input) {
     await delay(150);
     const idx = db.reports.findIndex((r) => r.id === input.reportId);
-    if (idx < 0) throw new Error('Reporte no encontrado.');
+    if (idx < 0) throw new Error(t('repoErrReportNotFound'));
     const updated: SafetyReportRecord = {
       ...db.reports[idx]!,
       status: input.status,

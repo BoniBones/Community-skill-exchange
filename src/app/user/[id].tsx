@@ -1,48 +1,52 @@
 import { useLocalSearchParams } from 'expo-router';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { View } from 'react-native';
 
 import { ActivityCard, Rating, Stars } from '../../components/activity';
 import { getNeighborhood, skillName } from '../../domain/catalog';
 import { formatShortDate } from '../../lib/dates';
-import { profiles } from '../../mocks/data';
+import { useI18n } from '../../lib/i18n';
 import {
   useBlockedUsers,
   useCurrentUserId,
   useInstructorActivities,
   useProfile,
+  useProfiles,
   useReportOrBlockUser,
   useReviewsAbout,
 } from '../../services/queries';
 import { DemoBanner, ErrorState, LoadingState, Screen, SectionHeader } from '../../ui/layout';
 import { Avatar, Badge, Button, Card, Chip, Text } from '../../ui/primitives';
-import { colors, spacing } from '../../ui/theme';
-
-const profileMap = new Map(profiles.map((p) => [p.id, p]));
-const reportReasons = [
-  'Solicitó datos privados o domicilio particular',
-  'Conducta inapropiada o trato irrespetuoso',
-  'Publicación engañosa o spam comercial',
-];
+import { animateLayout, spacing, useTheme } from '../../ui/theme';
 
 export default function PublicUserProfileScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { colors } = useTheme();
+  const { locale, t } = useI18n();
   const { data: viewerId } = useCurrentUserId();
   const user = useProfile(id);
   const viewer = useProfile(viewerId);
+  const allProfiles = useProfiles();
   const activities = useInstructorActivities(id);
   const reviews = useReviewsAbout(id);
   const blockedUsers = useBlockedUsers(viewerId);
   const reportOrBlock = useReportOrBlockUser(viewerId);
 
+  const reportReasons = [t('reportReason1'), t('reportReason2'), t('reportReason3')];
   const [showSafetyPanel, setShowSafetyPanel] = useState(false);
-  const [selectedReason, setSelectedReason] = useState(reportReasons[0]!);
+  const [selectedReasonIdx, setSelectedReasonIdx] = useState(0);
   const [safetySubmitted, setSafetySubmitted] = useState<string | null>(null);
+  const [safetyError, setSafetyError] = useState<string | null>(null);
+
+  const profileMap = useMemo(
+    () => new Map((allProfiles.data ?? []).map((pr) => [pr.id, pr])),
+    [allProfiles.data],
+  );
 
   if (user.isLoading) {
     return (
       <Screen edges={['bottom']}>
-        <LoadingState label="Cargando perfil…" />
+        <LoadingState label={t('userProfLoading')} />
       </Screen>
     );
   }
@@ -50,7 +54,7 @@ export default function PublicUserProfileScreen() {
   if (!user.data) {
     return (
       <Screen edges={['bottom']}>
-        <ErrorState message="No encontramos este perfil." onRetry={() => user.refetch()} />
+        <ErrorState message={t('userProfNotFound')} onRetry={() => user.refetch()} />
       </Screen>
     );
   }
@@ -60,19 +64,24 @@ export default function PublicUserProfileScreen() {
   const wants = p.skills.filter((s) => s.kind === 'wants');
   const viewerOffers = new Set((viewer.data?.skills ?? []).filter((s) => s.kind === 'offers').map((s) => s.skillId));
   const isBlocked = (blockedUsers.data ?? []).includes(p.id);
+  const selectedReason = reportReasons[selectedReasonIdx] ?? reportReasons[0]!;
 
   const handleSafetySubmit = async (blockUser: boolean) => {
-    await reportOrBlock.mutateAsync({
-      targetUserId: p.id,
-      reason: selectedReason,
-      blockUser,
-    });
-    setSafetySubmitted(
-      blockUser
-        ? `Reporte enviado y ${p.displayName} fue bloqueado/a. Sus actividades ya no aparecerán en tu exploración.`
-        : 'Reporte enviado al equipo de moderación comunitaria.',
-    );
-    setShowSafetyPanel(false);
+    setSafetyError(null);
+    try {
+      await reportOrBlock.mutateAsync({
+        targetUserId: p.id,
+        reason: selectedReason,
+        blockUser,
+      });
+      setSafetySubmitted(
+        blockUser ? t('userProfReportBlockedMsg', { name: p.displayName }) : t('userProfReportSentMsg'),
+      );
+      animateLayout();
+      setShowSafetyPanel(false);
+    } catch (err) {
+      setSafetyError(err instanceof Error ? err.message : t('userProfReportErr'));
+    }
   };
 
   return (
@@ -80,21 +89,22 @@ export default function PublicUserProfileScreen() {
       <DemoBanner compact />
 
       {isBlocked ? (
-        <Card style={{ backgroundColor: colors.dangerSoft, borderColor: colors.danger }}>
-          <Badge label="USUARIO BLOQUEADO" fg={colors.danger} bg="#FECACA" icon="ban-outline" />
+        <Card variant="flat" style={{ backgroundColor: colors.dangerSoft, borderColor: colors.danger, gap: spacing.xs }}>
+          <Badge label={t('userProfBlockedBadge')} fg={colors.danger} bg={colors.surface} icon="ban-outline" />
           <Text variant="caption" color={colors.danger}>
-            Bloqueaste a esta persona. Sus actividades están ocultas de tus recomendaciones y búsquedas.
+            {t('userProfBlockedBody')}
           </Text>
         </Card>
       ) : null}
 
       <Card style={{ gap: spacing.md }}>
         <View style={{ flexDirection: 'row', gap: spacing.md, alignItems: 'center' }}>
-          <Avatar name={p.displayName} size={64} />
+          <Avatar name={p.displayName} uri={p.avatarUrl} size={64} />
           <View style={{ flex: 1, gap: 4 }}>
             <Text variant="title">{p.displayName}</Text>
             <Text variant="caption" color={colors.textMuted}>
-              {getNeighborhood(p.neighborhoodId)?.name ?? 'Comunidad'} · Miembro desde {formatShortDate(p.memberSince)}
+              {getNeighborhood(p.neighborhoodId)?.name ?? t('communityPrefix')} ·{' '}
+              {t('profileMemberSince', { date: formatShortDate(p.memberSince, locale) })}
             </Text>
             <Rating avg={p.ratingAvg} count={p.ratingCount} />
           </View>
@@ -115,7 +125,7 @@ export default function PublicUserProfileScreen() {
               {p.completedSessions}
             </Text>
             <Text variant="caption" color={colors.textMuted}>
-              Sesiones completadas
+              {t('profileCompletedSessions')}
             </Text>
           </View>
           <View style={{ flex: 1 }}>
@@ -123,7 +133,7 @@ export default function PublicUserProfileScreen() {
               {p.communityContributions}
             </Text>
             <Text variant="caption" color={colors.textMuted}>
-              Aportes a la comunidad
+              {t('profileContributions')}
             </Text>
           </View>
         </View>
@@ -132,22 +142,23 @@ export default function PublicUserProfileScreen() {
       {/* Skills */}
       <Card style={{ gap: spacing.md }}>
         <View style={{ gap: spacing.sm }}>
-          <Badge label="ENSEÑA" fg={colors.primary} bg={colors.primarySoft} icon="easel-outline" />
+          <Badge label={t('userProfCanTeachBadge')} fg={colors.primary} bg={colors.primarySoft} icon="easel-outline" />
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
             {offers.map((s) => (
-              <Chip key={s.skillId} label={skillName(s.skillId)} selected tone={colors.primary} />
+              <Chip key={s.skillId} label={skillName(s.skillId, locale)} selected tone={colors.primary} />
             ))}
           </View>
         </View>
         <View style={{ gap: spacing.sm }}>
-          <Badge label="QUIERE APRENDER" fg={colors.accent} bg={colors.accentSoft} icon="bulb-outline" />
+          <Badge label={t('profileWantLearnBadge')} fg={colors.accent} bg={colors.accentSoft} icon="bulb-outline" />
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
             {wants.map((s) => {
               const youTeach = viewerOffers.has(s.skillId);
+              const name = skillName(s.skillId, locale);
               return (
                 <Chip
                   key={s.skillId}
-                  label={youTeach ? `${skillName(s.skillId)} (vos enseñás)` : skillName(s.skillId)}
+                  label={youTeach ? t('userProfYouTeachTag', { skill: name }) : name}
                   selected
                   tone={youTeach ? colors.accent : colors.textMuted}
                 />
@@ -156,13 +167,13 @@ export default function PublicUserProfileScreen() {
           </View>
         </View>
         <Text variant="caption" color={colors.textMuted}>
-          Disponibilidad habitual: {p.availabilitySummary}
+          {t('profileAvailabilityLabel', { summary: p.availabilitySummary })}
         </Text>
       </Card>
 
       {/* Activities */}
       <View style={{ gap: spacing.md }}>
-        <SectionHeader title={`Actividades de ${p.displayName.split(' ')[0]}`} />
+        <SectionHeader title={t('userProfActivitiesTitle', { name: p.displayName.split(' ')[0] })} />
         {(activities.data ?? []).map((a) => (
           <ActivityCard key={a.id} activity={a} instructor={p} />
         ))}
@@ -170,21 +181,21 @@ export default function PublicUserProfileScreen() {
 
       {/* Reviews */}
       <View style={{ gap: spacing.md }}>
-        <SectionHeader title="Reseñas de la comunidad" />
+        <SectionHeader title={t('userProfReviewsTitle')} />
         {(reviews.data ?? []).length === 0 ? (
           <Text variant="caption" color={colors.textMuted}>
-            Todavía no tiene reseñas verificadas.
+            {t('userProfNoReviews')}
           </Text>
         ) : (
           (reviews.data ?? []).map((r) => (
-            <Card key={r.id} style={{ gap: spacing.sm }}>
+            <Card key={r.id} variant="flat" style={{ gap: spacing.sm }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text variant="bodyStrong">{profileMap.get(r.authorId)?.displayName ?? 'Miembro'}</Text>
+                <Text variant="bodyStrong">{profileMap.get(r.authorId)?.displayName ?? t('commonMember')}</Text>
                 <Stars value={r.rating} />
               </View>
               <Text color={colors.text}>{r.comment}</Text>
               <Text variant="caption" color={colors.textMuted}>
-                {formatShortDate(r.createdAt)}
+                {formatShortDate(r.createdAt, locale)}
               </Text>
             </Card>
           ))
@@ -193,8 +204,8 @@ export default function PublicUserProfileScreen() {
 
       {/* Trust & Safety */}
       {p.id !== viewerId ? (
-        <Card style={{ backgroundColor: colors.surfaceAlt, gap: spacing.sm }}>
-          <Text variant="bodyStrong">Seguridad y moderación comunitaria</Text>
+        <Card variant="tinted" style={{ gap: spacing.sm }}>
+          <Text variant="bodyStrong">{t('userProfSafetyTitle')}</Text>
           {safetySubmitted ? (
             <Text variant="caption" color={colors.primary} style={{ fontWeight: '600' }}>
               {safetySubmitted}
@@ -202,19 +213,24 @@ export default function PublicUserProfileScreen() {
           ) : showSafetyPanel ? (
             <View style={{ gap: spacing.sm }}>
               <Text variant="caption" color={colors.textMuted}>
-                Seleccioná el motivo del reporte:
+                {t('userProfReportReasonPrompt')}
               </Text>
-              {reportReasons.map((reason) => (
+              {reportReasons.map((reason, idx) => (
                 <Chip
                   key={reason}
                   label={reason}
-                  selected={selectedReason === reason}
+                  selected={selectedReasonIdx === idx}
                   tone={colors.danger}
-                  onPress={() => setSelectedReason(reason)}
+                  onPress={() => setSelectedReasonIdx(idx)}
                 />
               ))}
+              {safetyError ? (
+                <Text variant="caption" color={colors.danger}>
+                  {safetyError}
+                </Text>
+              ) : null}
               <Button
-                title="Solo enviar reporte a moderación"
+                title={t('userProfReportOnlyBtn')}
                 variant="secondary"
                 icon="flag-outline"
                 loading={reportOrBlock.isPending}
@@ -222,7 +238,7 @@ export default function PublicUserProfileScreen() {
                 onPress={() => handleSafetySubmit(false)}
               />
               <Button
-                title="Reportar y bloquear usuario"
+                title={t('userProfReportBlockBtn')}
                 variant="danger"
                 icon="ban-outline"
                 loading={reportOrBlock.isPending}
@@ -232,10 +248,13 @@ export default function PublicUserProfileScreen() {
             </View>
           ) : (
             <Button
-              title="Reportar o bloquear usuario"
+              title={t('userProfReportTriggerBtn')}
               variant="ghost"
               icon="flag-outline"
-              onPress={() => setShowSafetyPanel(true)}
+              onPress={() => {
+                animateLayout();
+                setShowSafetyPanel(true);
+              }}
             />
           )}
         </Card>

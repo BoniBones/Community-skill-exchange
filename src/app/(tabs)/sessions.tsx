@@ -1,29 +1,40 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { View } from 'react-native';
 
 import { SessionCard } from '../../components/session';
-import { activities, profiles } from '../../mocks/data';
-import { useCurrentUserId, useSessions } from '../../services/queries';
+import { useI18n } from '../../lib/i18n';
+import { useActivities, useCurrentUserId, useProfiles, useSessions } from '../../services/queries';
 import { DemoBanner, EmptyState, LoadingState, Screen } from '../../ui/layout';
 import { Chip, Text } from '../../ui/primitives';
-import { colors, spacing } from '../../ui/theme';
-
-const activityMap = new Map(activities.map((a) => [a.id, a]));
-const profileMap = new Map(profiles.map((p) => [p.id, p]));
+import { spacing, useTheme } from '../../ui/theme';
 
 type TabFilter = 'upcoming' | 'past';
 type RoleFilter = 'all' | 'learning' | 'teaching';
 
 export default function SessionsScreen() {
+  const { colors } = useTheme();
+  const { t } = useI18n();
   const { data: userId } = useCurrentUserId();
   const sessions = useSessions(userId);
+  const allActivities = useActivities({});
+  const allProfiles = useProfiles();
+
   const [tab, setTab] = useState<TabFilter>('upcoming');
   const [role, setRole] = useState<RoleFilter>('all');
+
+  const activityMap = useMemo(
+    () => new Map((allActivities.data ?? []).map((a) => [a.id, a])),
+    [allActivities.data],
+  );
+  const profileMap = useMemo(
+    () => new Map((allProfiles.data ?? []).map((p) => [p.id, p])),
+    [allProfiles.data],
+  );
 
   if (sessions.isLoading || !userId) {
     return (
       <Screen>
-        <LoadingState label="Cargando tus sesiones…" />
+        <LoadingState label={t('sessionsLoading')} />
       </Screen>
     );
   }
@@ -40,33 +51,40 @@ export default function SessionsScreen() {
   });
 
   return (
-    <Screen refreshing={sessions.isRefetching} onRefresh={() => sessions.refetch()}>
+    <Screen
+      refreshing={sessions.isRefetching}
+      onRefresh={() => {
+        sessions.refetch();
+        allActivities.refetch();
+        allProfiles.refetch();
+      }}
+    >
       <DemoBanner compact />
 
       <View style={{ gap: 4 }}>
-        <Text variant="title">Mis sesiones</Text>
+        <Text variant="title">{t('sessionsTitle')}</Text>
         <Text variant="caption" color={colors.textMuted}>
-          Horarios expresados en hora de Argentina (America/Argentina/Buenos_Aires).
+          {t('sessionsTimezoneNote')}
         </Text>
       </View>
 
       {/* Upcoming / Past toggle */}
       <View style={{ flexDirection: 'row', gap: spacing.sm }}>
-        <Chip label="Próximas" selected={tab === 'upcoming'} onPress={() => setTab('upcoming')} />
-        <Chip label="Historial" selected={tab === 'past'} onPress={() => setTab('past')} />
+        <Chip label={t('sessionsUpcoming')} selected={tab === 'upcoming'} onPress={() => setTab('upcoming')} />
+        <Chip label={t('sessionsPast')} selected={tab === 'past'} onPress={() => setTab('past')} />
       </View>
 
       {/* Role filter */}
       <View style={{ flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap' }}>
-        <Chip label="Todas" selected={role === 'all'} onPress={() => setRole('all')} />
+        <Chip label={t('sessionsRoleAll')} selected={role === 'all'} onPress={() => setRole('all')} />
         <Chip
-          label="Aprendiendo"
+          label={t('sessionsRoleLearning')}
           icon="book-outline"
           selected={role === 'learning'}
           onPress={() => setRole('learning')}
         />
         <Chip
-          label="Enseñando"
+          label={t('sessionsRoleTeaching')}
           icon="easel-outline"
           selected={role === 'teaching'}
           tone={colors.accent}
@@ -77,8 +95,8 @@ export default function SessionsScreen() {
       {filtered.length === 0 ? (
         <EmptyState
           icon="calendar-outline"
-          title={tab === 'upcoming' ? 'No tenés sesiones próximas' : 'Sin sesiones en el historial'}
-          message="Explorá actividades de la comunidad para coordinar tu próximo encuentro."
+          title={tab === 'upcoming' ? t('sessionsEmptyUpcoming') : t('sessionsEmptyPast')}
+          message={t('sessionsEmptyMessage')}
         />
       ) : (
         <View style={{ gap: spacing.md }}>

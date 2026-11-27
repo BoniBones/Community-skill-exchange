@@ -1,35 +1,49 @@
-import { router } from 'expo-router';
+import { Redirect, router } from 'expo-router';
 import { useState } from 'react';
 import { TextInput, View } from 'react-native';
 
-import { NEIGHBORHOODS } from '../../domain/catalog';
+import { ProfilePhotoPicker } from '../../components/ProfilePhotoPicker';
+import { getNeighborhood } from '../../domain/catalog';
 import { useAuth } from '../../features/auth/authContext';
-import { DemoBanner, Screen } from '../../ui/layout';
-import { Badge, Button, Card, Chip, Text } from '../../ui/primitives';
-import { colors, radius, spacing } from '../../ui/theme';
+import { useI18n } from '../../lib/i18n';
+import { useCurrentUserId, useRemoveProfilePhoto, useUploadProfilePhoto } from '../../services/queries';
+import { DemoBanner, Screen, SectionHeader } from '../../ui/layout';
+import { Badge, Button, Card, Text } from '../../ui/primitives';
+import { radius, spacing, useTheme } from '../../ui/theme';
 
 export default function OnboardingProfileScreen() {
   const { draft, updateDraft } = useAuth();
+  const { data: userId } = useCurrentUserId();
+  const uploadPhoto = useUploadProfilePhoto(userId);
+  const removePhoto = useRemoveProfilePhoto(userId);
+  const { colors } = useTheme();
+  const { t } = useI18n();
+
   const [displayName, setDisplayName] = useState(draft.displayName);
-  const [neighborhoodId, setNeighborhoodId] = useState(draft.neighborhoodId);
   const [bio, setBio] = useState(draft.bio);
   const [availabilitySummary, setAvailabilitySummary] = useState(draft.availabilitySummary);
   const [error, setError] = useState<string | null>(null);
 
+  if (!draft.neighborhoodVerifiedAt) {
+    return <Redirect href="/(onboarding)/neighborhood" />;
+  }
+
+  const verifiedNeighborhoodName = getNeighborhood(draft.neighborhoodId)?.name ?? 'Santo Tomás';
+
   const handleNext = () => {
+    setError(null);
     if (displayName.trim().length < 2) {
-      setError('Ingresá tu nombre o cómo querés que te conozcan en la comunidad.');
+      setError(t('onbProfErrName'));
       return;
     }
     if (bio.trim().length < 10) {
-      setError('Escribí una breve presentación personal (al menos 10 caracteres).');
+      setError(t('onbProfErrBio'));
       return;
     }
     updateDraft({
       displayName: displayName.trim(),
-      neighborhoodId,
       bio: bio.trim(),
-      availabilitySummary: availabilitySummary.trim() || 'A coordinar',
+      availabilitySummary: availabilitySummary.trim() || t('commonToCoordinate'),
     });
     router.push('/(onboarding)/skills');
   };
@@ -39,22 +53,38 @@ export default function OnboardingProfileScreen() {
       <DemoBanner compact />
 
       <View style={{ gap: 4 }}>
-        <Badge label="PASO 2 DE 3 · IDENTIDAD EN LA COMUNIDAD" fg={colors.primary} bg={colors.primarySoft} icon="person-outline" />
-        <Text variant="title">Contanos quién sos</Text>
-        <Text color={colors.textMuted}>
-          En la comunidad todos podemos enseñar y aprender. Tu perfil muestra solo tu zona general (nunca tu domicilio).
-        </Text>
+        <Badge label={t('onbProfStepBadge')} fg={colors.primary} bg={colors.primarySoft} icon="person-outline" />
+        <Text variant="title">{t('onbProfTitle')}</Text>
+        <Text color={colors.textMuted}>{t('onbProfSubtitle')}</Text>
       </View>
+
+      <Card style={{ gap: spacing.md }}>
+        <SectionHeader title={t('settingsPhotoTitle')} subtitle={t('settingsPhotoSubtitle')} />
+        <ProfilePhotoPicker
+          displayName={displayName || draft.displayName}
+          currentUri={draft.avatarUrl}
+          isSaving={uploadPhoto.isPending || removePhoto.isPending}
+          onSaveAsset={async (asset) => {
+            const uri = await uploadPhoto.mutateAsync(asset);
+            updateDraft({ avatarUrl: uri });
+            return uri;
+          }}
+          onRemovePhoto={async () => {
+            await removePhoto.mutateAsync();
+            updateDraft({ avatarUrl: undefined });
+          }}
+        />
+      </Card>
 
       <Card style={{ gap: spacing.md }}>
         <View style={{ gap: 4 }}>
           <Text variant="label" color={colors.textMuted}>
-            TU NOMBRE EN LA COMUNIDAD
+            {t('onbProfNameLabel')}
           </Text>
           <TextInput
             value={displayName}
             onChangeText={setDisplayName}
-            placeholder="Ej: Sofía Romero"
+            placeholder={t('onbProfNamePlaceholder')}
             placeholderTextColor={colors.textMuted}
             style={{
               backgroundColor: colors.bg,
@@ -71,29 +101,31 @@ export default function OnboardingProfileScreen() {
 
         <View style={{ gap: spacing.xs }}>
           <Text variant="label" color={colors.textMuted}>
-            BARRIO O ZONA GENERAL
+            {t('onbProfZoneLabel')}
           </Text>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
-            {NEIGHBORHOODS.map((n) => (
-              <Chip
-                key={n.id}
-                label={n.name}
-                icon="location-outline"
-                selected={neighborhoodId === n.id}
-                onPress={() => setNeighborhoodId(n.id)}
-              />
-            ))}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm }}>
+            <Badge
+              label={t('onbProfVerifiedZoneBadge', { name: verifiedNeighborhoodName })}
+              fg={colors.success}
+              bg={colors.successSoft}
+              icon="shield-checkmark-outline"
+            />
+            <Button
+              title={t('onbProfChangeZoneBtn')}
+              variant="ghost"
+              onPress={() => router.replace('/(onboarding)/neighborhood')}
+            />
           </View>
         </View>
 
         <View style={{ gap: 4 }}>
           <Text variant="label" color={colors.textMuted}>
-            PRESENTACIÓN PERSONAL
+            {t('onbProfBioLabel')}
           </Text>
           <TextInput
             value={bio}
             onChangeText={setBio}
-            placeholder="Contá qué te gusta compartir, tu experiencia y qué te interesa aprender…"
+            placeholder={t('onbProfBioPlaceholder')}
             placeholderTextColor={colors.textMuted}
             multiline
             numberOfLines={3}
@@ -114,12 +146,12 @@ export default function OnboardingProfileScreen() {
 
         <View style={{ gap: 4 }}>
           <Text variant="label" color={colors.textMuted}>
-            DISPONIBILIDAD HABITUAL
+            {t('onbProfAvailLabel')}
           </Text>
           <TextInput
             value={availabilitySummary}
             onChangeText={setAvailabilitySummary}
-            placeholder="Ej: Martes y jueves por la tarde / Sábados por la mañana"
+            placeholder={t('onbProfAvailPlaceholder')}
             placeholderTextColor={colors.textMuted}
             style={{
               backgroundColor: colors.bg,
@@ -141,7 +173,7 @@ export default function OnboardingProfileScreen() {
         </Text>
       ) : null}
 
-      <Button title="Continuar a tus habilidades (Paso 3)" icon="arrow-forward-outline" fullWidth onPress={handleNext} />
+      <Button title={t('onbProfContinue')} icon="arrow-forward-outline" fullWidth onPress={handleNext} />
     </Screen>
   );
 }

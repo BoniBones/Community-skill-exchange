@@ -2,14 +2,18 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, TextInput, View } from 'react-native';
 
+import { isValidBirthDate } from '../../lib/dates';
+import { useI18n } from '../../lib/i18n';
 import { useCurrentUserId, useSubmitEligibility } from '../../services/queries';
 import { DemoBanner, Screen } from '../../ui/layout';
 import { Badge, Button, Card, Ionicons, Text } from '../../ui/primitives';
-import { colors, radius, spacing } from '../../ui/theme';
+import { radius, spacing, useTheme } from '../../ui/theme';
 
 export default function EligibilityScreen() {
   const { data: userId } = useCurrentUserId();
   const submitEligibility = useSubmitEligibility(userId);
+  const { colors } = useTheme();
+  const { t } = useI18n();
 
   const [day, setDay] = useState('14');
   const [month, setMonth] = useState('05');
@@ -18,33 +22,51 @@ export default function EligibilityScreen() {
   const [acceptedSafety, setAcceptedSafety] = useState(true);
   const [feedback, setFeedback] = useState<{ eligible: boolean; message: string } | null>(null);
 
+  const currentYear = new Date().getUTCFullYear();
   const parsedYear = Number(year);
-  const isMinorPreview = parsedYear >= 2009 && parsedYear <= 2013;
+  const isMinorPreview = parsedYear >= currentYear - 17 && parsedYear <= currentYear - 13;
 
   const handleContinue = async () => {
     setFeedback(null);
     const d = Number(day);
     const m = Number(month);
     const y = Number(year);
-    if (!d || !m || !y || d < 1 || d > 31 || m < 1 || m > 12 || y < 1920 || y > 2026) {
-      setFeedback({ eligible: false, message: 'Ingresá una fecha de nacimiento válida (DD / MM / AAAA).' });
+    if (!isValidBirthDate(y, m, d, { minYear: 1920 })) {
+      setFeedback({ eligible: false, message: t('eligInvalidDate') });
       return;
     }
 
-    const res = await submitEligibility.mutateAsync({
-      birthDay: d,
-      birthMonth: m,
-      birthYear: y,
-      acceptedSafetyRules: acceptedSafety,
-      guardianEmail: guardianEmail.trim() || undefined,
-    });
+    try {
+      const res = await submitEligibility.mutateAsync({
+        birthDay: d,
+        birthMonth: m,
+        birthYear: y,
+        acceptedSafetyRules: acceptedSafety,
+        guardianEmail: guardianEmail.trim() || undefined,
+      });
 
-    if (!res.eligible) {
-      setFeedback({ eligible: false, message: res.message });
-      return;
+      if (!res.eligible) {
+        setFeedback({ eligible: false, message: res.message });
+        return;
+      }
+
+      router.push('/(onboarding)/neighborhood');
+    } catch (err) {
+      setFeedback({ eligible: false, message: err instanceof Error ? err.message : t('errorDefault') });
     }
+  };
 
-    router.push('/(onboarding)/profile');
+  const dateInputStyle = {
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    minHeight: 46,
+    fontSize: 16,
+    fontWeight: '600' as const,
+    color: colors.text,
+    textAlign: 'center' as const,
   };
 
   return (
@@ -52,109 +74,82 @@ export default function EligibilityScreen() {
       <DemoBanner compact />
 
       <View style={{ gap: 4 }}>
-        <Badge label="PASO 1 DE 3 · SEGURIDAD Y CONFIANZA" fg={colors.primary} bg={colors.primarySoft} icon="shield-checkmark-outline" />
-        <Text variant="title">Elegibilidad y convivencia segura</Text>
-        <Text color={colors.textMuted}>
-          Tu fecha de nacimiento se guarda en tu perfil privado (nunca es pública) para proteger a la comunidad y
-          auditar los requisitos de edad.
-        </Text>
+        <Badge label={t('eligStepBadge')} fg={colors.primary} bg={colors.primarySoft} icon="shield-checkmark-outline" />
+        <Text variant="title">{t('eligTitle')}</Text>
+        <Text color={colors.textMuted}>{t('eligSubtitle')}</Text>
       </View>
 
       {/* Birth date inputs */}
       <Card style={{ gap: spacing.md }}>
         <Text variant="label" color={colors.textMuted}>
-          FECHA DE NACIMIENTO (PRIVADA)
+          {t('eligBirthLabel')}
         </Text>
         <View style={{ flexDirection: 'row', gap: spacing.sm }}>
           <View style={{ flex: 1, gap: 4 }}>
             <Text variant="caption" color={colors.textMuted}>
-              Día
+              {t('eligDay')}
             </Text>
             <TextInput
               value={day}
-              onChangeText={(t) => setDay(t.replace(/\D/g, '').slice(0, 2))}
+              onChangeText={(txt) => setDay(txt.replace(/\D/g, '').slice(0, 2))}
               keyboardType="number-pad"
               placeholder="DD"
-              style={{
-                backgroundColor: colors.bg,
-                borderWidth: 1,
-                borderColor: colors.border,
-                borderRadius: radius.md,
-                paddingHorizontal: spacing.md,
-                minHeight: 46,
-                fontSize: 16,
-                fontWeight: '600',
-                color: colors.text,
-                textAlign: 'center',
-              }}
+              placeholderTextColor={colors.textMuted}
+              style={dateInputStyle}
             />
           </View>
           <View style={{ flex: 1, gap: 4 }}>
             <Text variant="caption" color={colors.textMuted}>
-              Mes
+              {t('eligMonth')}
             </Text>
             <TextInput
               value={month}
-              onChangeText={(t) => setMonth(t.replace(/\D/g, '').slice(0, 2))}
+              onChangeText={(txt) => setMonth(txt.replace(/\D/g, '').slice(0, 2))}
               keyboardType="number-pad"
               placeholder="MM"
-              style={{
-                backgroundColor: colors.bg,
-                borderWidth: 1,
-                borderColor: colors.border,
-                borderRadius: radius.md,
-                paddingHorizontal: spacing.md,
-                minHeight: 46,
-                fontSize: 16,
-                fontWeight: '600',
-                color: colors.text,
-                textAlign: 'center',
-              }}
+              placeholderTextColor={colors.textMuted}
+              style={dateInputStyle}
             />
           </View>
           <View style={{ flex: 1.4, gap: 4 }}>
             <Text variant="caption" color={colors.textMuted}>
-              Año
+              {t('eligYear')}
             </Text>
             <TextInput
               value={year}
-              onChangeText={(t) => setYear(t.replace(/\D/g, '').slice(0, 4))}
+              onChangeText={(txt) => setYear(txt.replace(/\D/g, '').slice(0, 4))}
               keyboardType="number-pad"
-              placeholder="AAAA"
-              style={{
-                backgroundColor: colors.bg,
-                borderWidth: 1,
-                borderColor: colors.border,
-                borderRadius: radius.md,
-                paddingHorizontal: spacing.md,
-                minHeight: 46,
-                fontSize: 16,
-                fontWeight: '600',
-                color: colors.text,
-                textAlign: 'center',
-              }}
+              placeholder={t('eligYearPlaceholder')}
+              placeholderTextColor={colors.textMuted}
+              style={dateInputStyle}
             />
           </View>
         </View>
 
         {isMinorPreview ? (
-          <View style={{ gap: spacing.xs, backgroundColor: colors.warningSoft, padding: spacing.md, borderRadius: radius.md }}>
+          <View
+            style={{
+              gap: spacing.xs,
+              paddingTop: spacing.md,
+              borderTopWidth: 1,
+              borderTopColor: colors.border,
+            }}
+          >
             <Text variant="bodyStrong" color={colors.warning}>
-              Menores de 18 años: consentimiento parental requerido
+              {t('eligMinorTitle')}
             </Text>
             <Text variant="caption" color={colors.textMuted}>
-              El piloto inicial está habilitado para mayores de 18 años. Podés dejar el correo de tu madre, padre o
-              tutor legal para cuando se habiliten cuentas adolescentes supervisadas:
+              {t('eligMinorBody')}
             </Text>
             <TextInput
               value={guardianEmail}
               onChangeText={setGuardianEmail}
-              placeholder="email.tutor@ejemplo.com"
+              placeholder={t('eligGuardianPlaceholder')}
               placeholderTextColor={colors.textMuted}
               keyboardType="email-address"
               autoCapitalize="none"
               style={{
-                backgroundColor: colors.surface,
+                backgroundColor: colors.bg,
                 borderWidth: 1,
                 borderColor: colors.border,
                 borderRadius: radius.md,
@@ -170,19 +165,16 @@ export default function EligibilityScreen() {
 
       {/* Safety rules */}
       <Card style={{ gap: spacing.md }}>
-        <Text variant="heading">Acuerdo de seguridad comunitaria</Text>
+        <Text variant="heading">{t('eligSafetyTitle')}</Text>
         <View style={{ gap: spacing.sm }}>
           <Text variant="caption" color={colors.textMuted}>
-            1. <Text variant="bodyStrong">Puntos de encuentro públicos:</Text> Nunca publiques tu dirección particular;
-            los encuentros presenciales se realizan en espacios públicos o comunitarios de Santo Tomás, Pilar o Derqui.
+            1. <Text variant="bodyStrong">{t('eligRule1Title')}</Text> {t('eligRule1Body')}
           </Text>
           <Text variant="caption" color={colors.textMuted}>
-            2. <Text variant="bodyStrong">Verificación transparente:</Text> Confirmá la asistencia al inicio y cierre
-            con el código QR para cuidar la integridad de los créditos comunitarios.
+            2. <Text variant="bodyStrong">{t('eligRule2Title')}</Text> {t('eligRule2Body')}
           </Text>
           <Text variant="caption" color={colors.textMuted}>
-            3. <Text variant="bodyStrong">Respeto y reciprocidad:</Text> Cualquier conducta inapropiada puede ser
-            reportada o bloqueada desde cualquier perfil o sesión.
+            3. <Text variant="bodyStrong">{t('eligRule3Title')}</Text> {t('eligRule3Body')}
           </Text>
         </View>
 
@@ -205,13 +197,14 @@ export default function EligibilityScreen() {
             color={acceptedSafety ? colors.primary : colors.textMuted}
           />
           <Text variant="bodyStrong" style={{ flex: 1 }}>
-            Tengo 18 años o más y acepto las normas de seguridad comunitaria.
+            {t('eligAcceptLabel')}
           </Text>
         </Pressable>
       </Card>
 
       {feedback ? (
         <Card
+          variant="flat"
           style={{
             backgroundColor: feedback.eligible ? colors.primarySoft : colors.dangerSoft,
             borderColor: feedback.eligible ? colors.primary : colors.danger,
@@ -224,7 +217,7 @@ export default function EligibilityScreen() {
       ) : null}
 
       <Button
-        title="Verificar y continuar al paso 2"
+        title={t('eligContinue')}
         icon="arrow-forward-outline"
         loading={submitEligibility.isPending}
         fullWidth

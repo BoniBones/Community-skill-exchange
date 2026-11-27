@@ -6,7 +6,7 @@
     "version": "0.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "org.communityskillexchange.app"
@@ -28,7 +28,14 @@
       "expo-router",
       "expo-status-bar",
       "expo-localization",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Permite elegir una foto de perfil desde tu galería para mostrar en la comunidad.",
+          "cameraPermission": "Permite tomar una foto de perfil con tu cámara."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

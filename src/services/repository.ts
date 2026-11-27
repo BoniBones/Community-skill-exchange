@@ -9,19 +9,20 @@ import type {
   ActivityUpsertInput,
   AppNotification,
   AvailabilityUpdateInput,
-  ConfirmMonetaryPaymentInput,
   CreditWallet,
+  CustomSkillInput,
   DisputeRecord,
   EligibilitySubmission,
   ID,
   IssueSessionTokenInput,
   LedgerIntegrityReport,
-  MonetaryPayment,
+  Neighborhood,
+  NeighborhoodAccessInput,
   Profile,
+  ProfilePhotoAssetInput,
   ProfileStatus,
   ProfileUpdateInput,
   RedeemSessionTokenInput,
-  ReportMonetaryPaymentInput,
   ResolveDisputeInput,
   ResolveReportInput,
   Review,
@@ -33,14 +34,22 @@ import type {
   SessionRequestInput,
   SessionResponseInput,
   SessionVerificationToken,
+  Skill,
   SubmitCancellationObjectionInput,
 } from '../domain/types';
 
 export interface Repository {
   readonly kind: 'mock' | 'supabase';
   getCurrentUserId(): Promise<ID>;
+  listSkills(): Promise<Skill[]>;
+  createCustomSkill(userId: ID, input: CustomSkillInput): Promise<Skill>;
+  listNeighborhoods(): Promise<Neighborhood[]>;
+  verifyNeighborhoodAccess(userId: ID, input: NeighborhoodAccessInput): Promise<Profile>;
+  listProfiles(): Promise<Profile[]>;
   getProfile(id: ID): Promise<Profile | null>;
   updateProfile(userId: ID, input: ProfileUpdateInput): Promise<Profile>;
+  uploadProfilePhoto(userId: ID, asset: ProfilePhotoAssetInput): Promise<string>;
+  removeProfilePhoto(userId: ID): Promise<void>;
   updateAvailability(userId: ID, input: AvailabilityUpdateInput): Promise<Profile>;
   submitEligibility(
     userId: ID,
@@ -64,10 +73,6 @@ export interface Repository {
   ): Promise<{ session: Session; releasedCredits: number; message: string }>;
   getWallet(userId: ID): Promise<CreditWallet>;
   getLedgerIntegrity(userId: ID): Promise<LedgerIntegrityReport>;
-  listMonetaryPayments(userId: ID): Promise<MonetaryPayment[]>;
-  getMonetaryPaymentBySession(sessionId: ID): Promise<MonetaryPayment | null>;
-  reportMonetaryPayment(userId: ID, input: ReportMonetaryPaymentInput): Promise<MonetaryPayment>;
-  confirmMonetaryPayment(userId: ID, input: ConfirmMonetaryPaymentInput): Promise<MonetaryPayment>;
   listReviewsAbout(userId: ID): Promise<Review[]>;
   listReviewsBySession(sessionId: ID): Promise<Review[]>;
   submitReview(userId: ID, input: ReviewCreateInput): Promise<Review>;

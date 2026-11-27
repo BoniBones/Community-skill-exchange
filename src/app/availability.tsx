@@ -3,27 +3,11 @@ import { useState } from 'react';
 import { TextInput, View } from 'react-native';
 
 import type { AvailabilityWindow, DayPeriod } from '../domain/types';
-import { summarizeAvailability } from '../services/mockRepository';
-import { useCurrentUserId, useProfile, useUpdateAvailability } from '../services/queries';
+import { useI18n } from '../lib/i18n';
+import { summarizeAvailability, useCurrentUserId, useProfile, useUpdateAvailability } from '../services/queries';
 import { DemoBanner, LoadingState, Screen, SectionHeader } from '../ui/layout';
 import { Badge, Button, Card, Chip, Text } from '../ui/primitives';
-import { colors, radius, spacing } from '../ui/theme';
-
-const weekdays: { day: AvailabilityWindow['weekday']; label: string }[] = [
-  { day: 1, label: 'Lunes' },
-  { day: 2, label: 'Martes' },
-  { day: 3, label: 'Miércoles' },
-  { day: 4, label: 'Jueves' },
-  { day: 5, label: 'Viernes' },
-  { day: 6, label: 'Sábado' },
-  { day: 0, label: 'Domingo' },
-];
-
-const periods: { id: DayPeriod; label: string }[] = [
-  { id: 'morning', label: 'Mañana (9–12 h)' },
-  { id: 'afternoon', label: 'Tarde (15–18 h)' },
-  { id: 'evening', label: 'Noche (18–21 h)' },
-];
+import { radius, spacing, useTheme } from '../ui/theme';
 
 const defaultWindows: AvailabilityWindow[] = [
   { weekday: 2, period: 'afternoon' },
@@ -34,18 +18,26 @@ export default function AvailabilityScreen() {
   const { data: userId } = useCurrentUserId();
   const me = useProfile(userId);
   const updateAvailability = useUpdateAvailability(userId);
+  const { t } = useI18n();
 
   if (me.isLoading || !me.data) {
     return (
       <Screen edges={['bottom']}>
-        <LoadingState label="Cargando disponibilidad…" />
+        <LoadingState label={t('availLoading')} />
       </Screen>
     );
   }
 
+  const parsedNote =
+    me.data.availabilityNote ??
+    (me.data.availabilitySummary.includes(' — ')
+      ? me.data.availabilitySummary.split(' — ').slice(1).join(' — ')
+      : '');
+
   return (
     <AvailabilityInner
       initialWindows={me.data.availabilityWindows ?? defaultWindows}
+      initialNote={parsedNote}
       onSave={updateAvailability.mutateAsync}
       isSaving={updateAvailability.isPending}
     />
@@ -54,15 +46,36 @@ export default function AvailabilityScreen() {
 
 function AvailabilityInner({
   initialWindows,
+  initialNote,
   onSave,
   isSaving,
 }: {
   initialWindows: AvailabilityWindow[];
+  initialNote: string;
   onSave: ReturnType<typeof useUpdateAvailability>['mutateAsync'];
   isSaving: boolean;
 }) {
+  const { colors } = useTheme();
+  const { locale, t } = useI18n();
   const [windows, setWindows] = useState<AvailabilityWindow[]>(initialWindows);
-  const [customNote, setCustomNote] = useState('');
+  const [customNote, setCustomNote] = useState(initialNote);
+  const [error, setError] = useState<string | null>(null);
+
+  const weekdays: { day: AvailabilityWindow['weekday']; label: string }[] = [
+    { day: 1, label: t('weekday1') },
+    { day: 2, label: t('weekday2') },
+    { day: 3, label: t('weekday3') },
+    { day: 4, label: t('weekday4') },
+    { day: 5, label: t('weekday5') },
+    { day: 6, label: t('weekday6') },
+    { day: 0, label: t('weekday0') },
+  ];
+
+  const periods: { id: DayPeriod; label: string }[] = [
+    { id: 'morning', label: t('periodMorning') },
+    { id: 'afternoon', label: t('periodAfternoon') },
+    { id: 'evening', label: t('periodEvening') },
+  ];
 
   const isSelected = (day: AvailabilityWindow['weekday'], period: DayPeriod) =>
     windows.some((w) => w.weekday === day && w.period === period);
@@ -75,11 +88,16 @@ function AvailabilityInner({
     }
   };
 
-  const previewSummary = summarizeAvailability(windows, customNote);
+  const previewSummary = summarizeAvailability(windows, customNote, locale);
 
   const handleSave = async () => {
-    await onSave({ windows, customNote });
-    router.back();
+    setError(null);
+    try {
+      await onSave({ windows, customNote });
+      router.back();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('errorDefault'));
+    }
   };
 
   return (
@@ -87,23 +105,15 @@ function AvailabilityInner({
       <DemoBanner compact />
 
       <View style={{ gap: 4 }}>
-        <Badge
-          label="ZONA HORARIA: AMERICA/ARGENTINA/BUENOS_AIRES"
-          fg={colors.primary}
-          bg={colors.primarySoft}
-          icon="time-outline"
-        />
-        <Text variant="title">Mi disponibilidad horaria</Text>
+        <Badge label={t('availTzBadge')} fg={colors.primary} bg={colors.primarySoft} icon="time-outline" />
+        <Text variant="title">{t('availTitle')}</Text>
         <Text variant="caption" color={colors.textMuted}>
-          Marcá tus franjas habituales para enseñar y aprender. Esto ayuda a encontrar vecinos con horarios compatibles.
+          {t('availSubtitle')}
         </Text>
       </View>
 
       <Card style={{ gap: spacing.md }}>
-        <SectionHeader
-          title="Franjas semanales"
-          subtitle="Tocá para activar o desactivar cada bloque horario"
-        />
+        <SectionHeader title={t('availSlotsTitle')} subtitle={t('availSlotsSubtitle')} />
         {weekdays.map((w) => (
           <View
             key={w.day}
@@ -130,12 +140,12 @@ function AvailabilityInner({
 
         <View style={{ gap: 4 }}>
           <Text variant="label" color={colors.textMuted}>
-            ACLARACIÓN ADICIONAL (OPCIONAL)
+            {t('availNoteLabel')}
           </Text>
           <TextInput
             value={customNote}
             onChangeText={setCustomNote}
-            placeholder="Ej: También puedo coordinar feriados por la mañana"
+            placeholder={t('availNotePlaceholder')}
             placeholderTextColor={colors.textMuted}
             style={{
               backgroundColor: colors.bg,
@@ -151,17 +161,23 @@ function AvailabilityInner({
         </View>
       </Card>
 
-      <Card style={{ backgroundColor: colors.surfaceAlt, gap: spacing.xs }}>
+      <Card variant="tinted" style={{ gap: spacing.xs }}>
         <Text variant="caption" color={colors.textMuted}>
-          Resumen que verán en tu perfil:
+          {t('availPreviewLabel')}
         </Text>
         <Text variant="bodyStrong" color={colors.primary}>
           {previewSummary}
         </Text>
       </Card>
 
+      {error ? (
+        <Text variant="caption" color={colors.danger}>
+          {error}
+        </Text>
+      ) : null}
+
       <Button
-        title="Guardar disponibilidad"
+        title={t('availSaveBtn')}
         icon="checkmark-circle-outline"
         loading={isSaving}
         fullWidth

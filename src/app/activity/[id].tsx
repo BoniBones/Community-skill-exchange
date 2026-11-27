@@ -3,9 +3,10 @@ import { useMemo, useState } from 'react';
 import { TextInput, View } from 'react-native';
 
 import { PaymentPill, Rating } from '../../components/activity';
-import { categoryOfSkill, getNeighborhood, skillName } from '../../domain/catalog';
+import { categoryOfSkill, getCategoryColor, getCategoryName, getNeighborhood, skillName } from '../../domain/catalog';
 import { formatSessionDate } from '../../lib/dates';
-import { formatCredits, formatDuration, formatPayment, paymentModeLabel } from '../../lib/format';
+import { formatCredits, formatDuration } from '../../lib/format';
+import { useI18n } from '../../lib/i18n';
 import {
   useActivity,
   useCurrentUserId,
@@ -14,14 +15,8 @@ import {
   useWallet,
 } from '../../services/queries';
 import { DemoBanner, ErrorState, InfoRow, LoadingState, Screen } from '../../ui/layout';
-import { Avatar, Badge, Button, Card, Chip, IconCircle, Text, type IconName } from '../../ui/primitives';
-import { colors, radius, spacing } from '../../ui/theme';
-
-const formatLabel = {
-  in_person: 'Presencial',
-  online: 'Online (videollamada)',
-  either: 'Presencial u online',
-};
+import { Avatar, Badge, Button, Card, Chip, IconCircle, Ionicons, Text, type IconName } from '../../ui/primitives';
+import { radius, spacing, useTheme } from '../../ui/theme';
 
 /** Generates 3 upcoming candidate UTC timestamps at 18:00 / 19:00 / 10:00 Buenos Aires time (UTC−3). */
 function generateCandidateSlots(): string[] {
@@ -42,6 +37,8 @@ function generateCandidateSlots(): string[] {
 
 export default function ActivityDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { colors, resolvedScheme } = useTheme();
+  const { locale, t } = useI18n();
   const { data: viewerId } = useCurrentUserId();
   const activity = useActivity(id);
   const instructor = useProfile(activity.data?.instructorId);
@@ -58,7 +55,7 @@ export default function ActivityDetailScreen() {
   if (activity.isLoading || instructor.isLoading) {
     return (
       <Screen edges={['bottom']}>
-        <LoadingState label="Cargando actividad…" />
+        <LoadingState label={t('actDetailLoading')} />
       </Screen>
     );
   }
@@ -66,7 +63,7 @@ export default function ActivityDetailScreen() {
   if (!activity.data || !instructor.data) {
     return (
       <Screen edges={['bottom']}>
-        <ErrorState message="No encontramos esta actividad." onRetry={() => activity.refetch()} />
+        <ErrorState message={t('actDetailNotFound')} onRetry={() => activity.refetch()} />
       </Screen>
     );
   }
@@ -74,7 +71,14 @@ export default function ActivityDetailScreen() {
   const a = activity.data;
   const inst = instructor.data;
   const category = categoryOfSkill(a.skillId);
+  const categoryColor = category ? getCategoryColor(category, resolvedScheme) : colors.primary;
   const isOwnActivity = a.instructorId === viewerId;
+
+  const formatLabel = {
+    in_person: t('actDetailFormatInPerson'),
+    online: t('actDetailFormatOnline'),
+    either: t('actDetailFormatEither'),
+  };
 
   // Check reciprocal match between viewer and instructor
   const viewerOffers = new Set((viewer.data?.skills ?? []).filter((s) => s.kind === 'offers').map((s) => s.skillId));
@@ -90,7 +94,7 @@ export default function ActivityDetailScreen() {
       });
       setCreatedSessionId(created.id);
     } catch (e) {
-      setBookingError(e instanceof Error ? e.message : 'No se pudo solicitar la sesión.');
+      setBookingError(e instanceof Error ? e.message : t('actDetailBookErr'));
     }
   };
 
@@ -101,85 +105,81 @@ export default function ActivityDetailScreen() {
       {/* Title & category */}
       <View style={{ gap: spacing.sm }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
-          {category ? <IconCircle icon={category.icon as IconName} color={category.color} size={36} /> : null}
-          <Badge
-            label={(category?.name ?? 'Actividad').toUpperCase()}
-            fg={category?.color ?? colors.primary}
-            bg={colors.surfaceAlt}
-          />
+          {category ? <IconCircle icon={category.icon as IconName} color={categoryColor} size={36} /> : null}
+          <Text variant="label" color={categoryColor}>
+            {(category ? getCategoryName(category, locale) : t('activityFallbackTitle')).toUpperCase()}
+          </Text>
         </View>
         <Text variant="display">{a.title}</Text>
         <Text variant="caption" color={colors.textMuted}>
-          Habilidad: {skillName(a.skillId)} · Duración: {formatDuration(a.durationMin)}
+          {t('actDetailSkillDuration', {
+            skill: skillName(a.skillId, locale),
+            duration: formatDuration(a.durationMin, locale),
+          })}
         </Text>
       </View>
 
       {/* Reciprocal callout */}
       {!isOwnActivity && reciprocalSkill ? (
-        <Card style={{ backgroundColor: colors.accentSoft, borderColor: '#FED7AA', gap: spacing.xs }}>
-          <Badge label="COINCIDENCIA RECÍPROCA" fg={colors.accent} bg="#FED7AA" icon="swap-horizontal" />
+        <Card variant="flat" style={{ backgroundColor: colors.accentSoft, borderColor: colors.accent, gap: spacing.xs }}>
+          <Badge label={t('actDetailReciprocalBadge')} fg={colors.accent} bg={colors.surface} icon="swap-horizontal" />
           <Text variant="bodyStrong" color={colors.accent}>
-            {inst.displayName.split(' ')[0]} quiere aprender {skillName(reciprocalSkill.skillId)}, que vos enseñás.
+            {t('actDetailReciprocalTitle', {
+              name: inst.displayName.split(' ')[0],
+              skill: skillName(reciprocalSkill.skillId, locale),
+            })}
           </Text>
           <Text variant="caption" color={colors.textMuted}>
-            Pueden intercambiar directamente o usar tus créditos acumulados.
+            {t('actDetailReciprocalBody')}
           </Text>
         </Card>
       ) : null}
 
-      {/* Payment arrangement card */}
+      {/* Credits card */}
       <Card style={{ gap: spacing.sm }}>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text variant="label" color={colors.textMuted}>
-            MODALIDAD ELEGIDA POR EL INSTRUCTOR
-          </Text>
-          <Badge label={paymentModeLabel[a.payment.mode].toUpperCase()} fg={colors.primary} bg={colors.primarySoft} />
-        </View>
-        <PaymentPill payment={a.payment} />
-        <Text variant="caption" color={colors.textMuted}>
-          {a.payment.mode === 'credits'
-            ? 'Se abona exclusivamente con créditos comunitarios (en custodia al reservar, se liberan al verificar el QR).'
-            : a.payment.mode === 'money'
-              ? 'El instructor ofrece esta actividad por un pago monetario acordado directamente entre las partes.'
-              : 'Combina créditos comunitarios (en custodia) y un aporte en dinero acordado con el instructor.'}
+        <Text variant="label" color={colors.textMuted}>
+          {t('actDetailCreditsLabel')}
         </Text>
-        {a.payment.mode !== 'money' && wallet.data ? (
+        <PaymentPill creditAmount={a.creditAmount} />
+        <Text variant="caption" color={colors.textMuted}>
+          {t('actDetailCreditsBody')}
+        </Text>
+        {wallet.data ? (
           <Text variant="caption" color={colors.credit} style={{ fontWeight: '600' }}>
-            Tu saldo disponible: {formatCredits(wallet.data.available)}
+            {t('actDetailYourBalance', { balance: formatCredits(wallet.data.available, locale) })}
           </Text>
         ) : null}
       </Card>
 
       {/* Description & logistics */}
       <Card style={{ gap: spacing.md }}>
-        <Text variant="heading">Sobre la actividad</Text>
+        <Text variant="heading">{t('actDetailAboutTitle')}</Text>
         <Text color={colors.text}>{a.description}</Text>
-        <InfoRow icon="time-outline" label="Duración por encuentro" value={formatDuration(a.durationMin)} />
-        <InfoRow icon="calendar-outline" label="Disponibilidad habitual" value={a.availabilitySummary} />
-        <InfoRow icon="videocam-outline" label="Formato" value={formatLabel[a.format]} />
-        <InfoRow
-          icon="location-outline"
-          label="Punto de encuentro (nunca dirección privada)"
-          value={a.meetingArea}
-        />
-        <InfoRow icon="checkmark-circle-outline" label="Requisitos" value={a.requirements} />
+        <InfoRow icon="time-outline" label={t('actDetailDurationLabel')} value={formatDuration(a.durationMin, locale)} />
+        <InfoRow icon="calendar-outline" label={t('actDetailAvailabilityLabel')} value={a.availabilitySummary} />
+        <InfoRow icon="videocam-outline" label={t('actDetailFormatLabel')} value={formatLabel[a.format]} />
+        <InfoRow icon="location-outline" label={t('actDetailMeetingLabel')} value={a.meetingArea} />
+        <InfoRow icon="checkmark-circle-outline" label={t('actDetailRequirementsLabel')} value={a.requirements} />
       </Card>
 
       {/* Instructor card */}
       <Card
         onPress={() => router.push({ pathname: '/user/[id]', params: { id: inst.id } })}
-        accessibilityLabel={`Ver perfil de ${inst.displayName}`}
+        accessibilityLabel={t('actDetailInstructorA11y', { name: inst.displayName })}
         style={{ gap: spacing.md }}
       >
         <Text variant="label" color={colors.textMuted}>
-          QUIÉN ENSEÑA
+          {t('actDetailInstructorLabel')}
         </Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
-          <Avatar name={inst.displayName} size={52} />
+          <Avatar name={inst.displayName} uri={inst.avatarUrl} size={52} />
           <View style={{ flex: 1, gap: 2 }}>
             <Text variant="heading">{inst.displayName}</Text>
             <Text variant="caption" color={colors.textMuted}>
-              {getNeighborhood(inst.neighborhoodId)?.name ?? 'Comunidad'} · {inst.completedSessions} sesiones
+              {t('actDetailCompletedCount', {
+                neighborhood: getNeighborhood(inst.neighborhoodId)?.name ?? t('communityPrefix'),
+                count: inst.completedSessions,
+              })}
             </Text>
             <Rating avg={inst.ratingAvg} count={inst.ratingCount} />
           </View>
@@ -187,33 +187,39 @@ export default function ActivityDetailScreen() {
         <Text variant="caption" color={colors.textMuted} numberOfLines={2}>
           {inst.bio}
         </Text>
-        <Text variant="caption" color={colors.primary} style={{ fontWeight: '700' }}>
-          Ver perfil completo y reseñas →
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Text variant="caption" color={colors.primary} style={{ fontWeight: '700' }}>
+            {t('actDetailViewFullProfile')}
+          </Text>
+          <Ionicons name="arrow-forward" size={14} color={colors.primary} />
+        </View>
       </Card>
 
       {/* Booking section */}
       {isOwnActivity ? (
         <Button
-          title="Gestionar mis actividades"
+          title={t('actDetailManageMine')}
           variant="secondary"
           icon="settings-outline"
           fullWidth
           onPress={() => router.push('/my-activities')}
         />
       ) : createdSessionId ? (
-        <Card style={{ backgroundColor: colors.primarySoft, borderColor: colors.primary, gap: spacing.sm }}>
-          <Badge label="SESIÓN SOLICITADA (DEMO)" fg={colors.primary} bg="#99F6E4" icon="checkmark-circle-outline" />
+        <Card variant="flat" style={{ backgroundColor: colors.primarySoft, borderColor: colors.primary, gap: spacing.sm }}>
+          <Badge
+            label={t('actDetailRequestedBadge')}
+            fg={colors.primary}
+            bg={colors.surface}
+            icon="checkmark-circle-outline"
+          />
           <Text variant="bodyStrong" color={colors.primary}>
-            ¡Solicitud enviada para el {formatSessionDate(selectedSlot)}!
+            {t('actDetailRequestedTitle', { date: formatSessionDate(selectedSlot, locale) })}
           </Text>
           <Text variant="caption" color={colors.textMuted}>
-            {a.payment.mode !== 'money'
-              ? `Se pusieron ${formatCredits(a.payment.creditAmount ?? 0)} en custodia (Escrow). Podés ver la sesión en la pestaña «Sesiones» y el movimiento en «Créditos».`
-              : 'La sesión quedó en estado «SOLICITADA». Podés verla en la pestaña «Sesiones».'}
+            {t('actDetailRequestedBody', { credits: formatCredits(a.creditAmount, locale) })}
           </Text>
           <Button
-            title="Abrir detalle de la sesión"
+            title={t('actDetailOpenSession')}
             icon="calendar-outline"
             fullWidth
             onPress={() => router.push({ pathname: '/session/[id]', params: { id: createdSessionId } })}
@@ -221,15 +227,15 @@ export default function ActivityDetailScreen() {
         </Card>
       ) : (
         <Card style={{ gap: spacing.md }}>
-          <Text variant="heading">Coordinar fecha y horario</Text>
+          <Text variant="heading">{t('actDetailCoordinateTitle')}</Text>
           <Text variant="caption" color={colors.textMuted}>
-            Elegí un turno disponible (hora de Buenos Aires):
+            {t('actDetailChooseSlot')}
           </Text>
           <View style={{ gap: spacing.xs }}>
             {candidateSlots.map((slot) => (
               <Chip
                 key={slot}
-                label={formatSessionDate(slot)}
+                label={formatSessionDate(slot, locale)}
                 icon="calendar-outline"
                 selected={selectedSlot === slot}
                 onPress={() => setSelectedSlot(slot)}
@@ -239,12 +245,12 @@ export default function ActivityDetailScreen() {
 
           <View style={{ gap: 4 }}>
             <Text variant="label" color={colors.textMuted}>
-              MENSAJE OPCIONAL PARA {inst.displayName.split(' ')[0].toUpperCase()}
+              {t('actDetailNoteLabel', { name: inst.displayName.split(' ')[0].toUpperCase() })}
             </Text>
             <TextInput
               value={learnerNote}
               onChangeText={setLearnerNote}
-              placeholder="Contale tu nivel actual o qué te gustaría practicar…"
+              placeholder={t('actDetailNotePlaceholder')}
               placeholderTextColor={colors.textMuted}
               style={{
                 backgroundColor: colors.bg,
@@ -266,7 +272,7 @@ export default function ActivityDetailScreen() {
           ) : null}
 
           <Button
-            title={`Solicitar sesión (${formatPayment(a.payment)})`}
+            title={t('actDetailBookBtn', { credits: formatCredits(a.creditAmount, locale) })}
             icon="calendar-outline"
             loading={requestSession.isPending}
             fullWidth

@@ -2,9 +2,10 @@ import type { ReactNode } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, View, type StyleProp, type ViewStyle } from 'react-native';
 import { SafeAreaView, type Edge } from 'react-native-safe-area-context';
 
+import { useI18n } from '../lib/i18n';
 import { isDemoData } from '../services/queries';
 import { Button, IconCircle, Ionicons, Text, type IconName } from './primitives';
-import { colors, radius, spacing } from './theme';
+import { radius, spacing, useTheme } from './theme';
 
 /* ──────────────────────────── Screen ──────────────────────────── */
 
@@ -17,8 +18,9 @@ interface ScreenProps {
   onRefresh?: () => void;
 }
 
-/** Standard screen container: safe area + warm background + optional scroll. */
+/** Standard screen container: safe area + themed background + optional scroll. */
 export function Screen({ children, scroll = true, edges = ['top'], contentStyle, refreshing, onRefresh }: ScreenProps) {
+  const { colors } = useTheme();
   const inner = [{ padding: spacing.lg, gap: spacing.lg, paddingBottom: spacing.xxl }, contentStyle];
   return (
     <SafeAreaView edges={edges} style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -42,6 +44,7 @@ export function Screen({ children, scroll = true, edges = ['top'], contentStyle,
 /* ───────────────────────── Section header ─────────────────────── */
 
 export function SectionHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: ReactNode }) {
+  const { colors } = useTheme();
   return (
     <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: spacing.md }}>
       <View style={{ flex: 1, gap: 2 }}>
@@ -59,12 +62,14 @@ export function SectionHeader({ title, subtitle, action }: { title: string; subt
 
 /* ───────────────────────── States ─────────────────────────────── */
 
-export function LoadingState({ label = 'Cargando…' }: { label?: string }) {
+export function LoadingState({ label }: { label?: string }) {
+  const { colors } = useTheme();
+  const { t } = useI18n();
   return (
     <View style={{ paddingVertical: spacing.xxl, alignItems: 'center', gap: spacing.md }}>
       <ActivityIndicator color={colors.primary} />
       <Text variant="caption" color={colors.textMuted}>
-        {label}
+        {label ?? t('loadingDefault')}
       </Text>
     </View>
   );
@@ -83,6 +88,7 @@ export function EmptyState({
   actionLabel?: string;
   onAction?: () => void;
 }) {
+  const { colors } = useTheme();
   return (
     <View style={{ paddingVertical: spacing.xxl, alignItems: 'center', gap: spacing.md }}>
       <IconCircle icon={icon} color={colors.textMuted} size={56} />
@@ -100,12 +106,13 @@ export function EmptyState({
 }
 
 export function ErrorState({ message, onRetry }: { message?: string; onRetry?: () => void }) {
+  const { t } = useI18n();
   return (
     <EmptyState
       icon="cloud-offline-outline"
-      title="No pudimos cargar esto"
-      message={message ?? 'Revisá tu conexión e intentá de nuevo.'}
-      actionLabel={onRetry ? 'Reintentar' : undefined}
+      title={t('errorTitle')}
+      message={message ?? t('errorDefault')}
+      actionLabel={onRetry ? t('retry') : undefined}
       onAction={onRetry}
     />
   );
@@ -118,6 +125,8 @@ export function ErrorState({ message, onRetry }: { message?: string; onRetry?: (
  * credits or auth are never mistaken for real production functionality.
  */
 export function DemoBanner({ compact }: { compact?: boolean }) {
+  const { colors } = useTheme();
+  const { t } = useI18n();
   if (!isDemoData) return null;
   return (
     <View
@@ -127,7 +136,7 @@ export function DemoBanner({ compact }: { compact?: boolean }) {
         alignItems: 'center',
         gap: spacing.sm,
         backgroundColor: colors.warningSoft,
-        borderColor: '#FDE68A',
+        borderColor: colors.warningBorder,
         borderWidth: 1,
         borderRadius: radius.md,
         paddingHorizontal: spacing.md,
@@ -136,9 +145,7 @@ export function DemoBanner({ compact }: { compact?: boolean }) {
     >
       <Ionicons name="flask-outline" size={16} color={colors.warning} />
       <Text variant="caption" color={colors.warning} style={{ flex: 1, fontWeight: '600' }}>
-        {compact
-          ? 'DATOS DE DEMOSTRACIÓN'
-          : 'DATOS DE DEMOSTRACIÓN · Las personas, reservas y créditos son simulados. Nada se guarda.'}
+        {compact ? t('demoBannerCompact') : t('demoBannerFull')}
       </Text>
     </View>
   );
@@ -147,6 +154,7 @@ export function DemoBanner({ compact }: { compact?: boolean }) {
 /* ───────────────────────── Info row ───────────────────────────── */
 
 export function InfoRow({ icon, label, value }: { icon: IconName; label: string; value: string }) {
+  const { colors } = useTheme();
   return (
     <View style={{ flexDirection: 'row', gap: spacing.md, alignItems: 'flex-start' }}>
       <Ionicons name={icon} size={20} color={colors.primary} style={{ marginTop: 1 }} />

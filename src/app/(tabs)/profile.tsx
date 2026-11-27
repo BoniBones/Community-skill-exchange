@@ -1,36 +1,40 @@
 import { router } from 'expo-router';
-import { View } from 'react-native';
+import { useMemo } from 'react';
+import { Pressable, View } from 'react-native';
 
 import { ActivityCard, Rating, Stars } from '../../components/activity';
 import { getNeighborhood, skillName } from '../../domain/catalog';
-import { useAuth } from '../../features/auth/authContext';
 import { formatShortDate } from '../../lib/dates';
 import { useI18n } from '../../lib/i18n';
-import { profiles } from '../../mocks/data';
 import {
   useCurrentUserId,
   useInstructorActivities,
   useProfile,
+  useProfiles,
   useReviewsAbout,
 } from '../../services/queries';
 import { DemoBanner, ErrorState, LoadingState, Screen, SectionHeader } from '../../ui/layout';
-import { Avatar, Badge, Button, Card, Chip, Text } from '../../ui/primitives';
-import { colors, spacing } from '../../ui/theme';
-
-const profileMap = new Map(profiles.map((p) => [p.id, p]));
+import { Avatar, Badge, Button, Card, Chip, Ionicons, Text } from '../../ui/primitives';
+import { radius, spacing, useTheme } from '../../ui/theme';
 
 export default function ProfileScreen() {
-  const { locale, setLocale, t } = useI18n();
-  const { resetToNewOnboarding, signOut } = useAuth();
+  const { locale, t } = useI18n();
+  const { colors } = useTheme();
   const { data: userId } = useCurrentUserId();
   const me = useProfile(userId);
+  const allProfiles = useProfiles();
   const myActivities = useInstructorActivities(userId);
   const reviews = useReviewsAbout(userId);
+
+  const profileMap = useMemo(
+    () => new Map((allProfiles.data ?? []).map((pr) => [pr.id, pr])),
+    [allProfiles.data],
+  );
 
   if (me.isLoading) {
     return (
       <Screen>
-        <LoadingState label="Cargando tu perfil…" />
+        <LoadingState label={t('profileLoading')} />
       </Screen>
     );
   }
@@ -54,6 +58,7 @@ export default function ProfileScreen() {
         me.refetch();
         myActivities.refetch();
         reviews.refetch();
+        allProfiles.refetch();
       }}
     >
       <DemoBanner compact />
@@ -61,14 +66,29 @@ export default function ProfileScreen() {
       {/* Identity card */}
       <Card style={{ gap: spacing.md }}>
         <View style={{ flexDirection: 'row', gap: spacing.md, alignItems: 'center' }}>
-          <Avatar name={p.displayName} size={64} />
+          <Avatar name={p.displayName} uri={p.avatarUrl} size={64} />
           <View style={{ flex: 1, gap: 4 }}>
             <Text variant="title">{p.displayName}</Text>
             <Text variant="caption" color={colors.textMuted}>
-              {getNeighborhood(p.neighborhoodId)?.name ?? 'Comunidad'} · Miembro desde {formatShortDate(p.memberSince)}
+              {getNeighborhood(p.neighborhoodId)?.name ?? t('communityPrefix')} ·{' '}
+              {t('profileMemberSince', { date: formatShortDate(p.memberSince, locale) })}
             </Text>
             <Rating avg={p.ratingAvg} count={p.ratingCount} />
           </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t('profileSettingsA11y')}
+            onPress={() => router.push('/settings')}
+            style={{
+              backgroundColor: colors.surfaceAlt,
+              borderWidth: 1,
+              borderColor: colors.border,
+              borderRadius: radius.pill,
+              padding: 10,
+            }}
+          >
+            <Ionicons name="settings-outline" size={20} color={colors.text} />
+          </Pressable>
         </View>
         <Text color={colors.text}>{p.bio}</Text>
 
@@ -87,7 +107,7 @@ export default function ProfileScreen() {
               {p.completedSessions}
             </Text>
             <Text variant="caption" color={colors.textMuted}>
-              Sesiones completadas
+              {t('profileCompletedSessions')}
             </Text>
           </View>
           <View style={{ flex: 1 }}>
@@ -95,53 +115,53 @@ export default function ProfileScreen() {
               {p.communityContributions}
             </Text>
             <Text variant="caption" color={colors.textMuted}>
-              Aportes a la comunidad
+              {t('profileContributions')}
             </Text>
           </View>
         </View>
 
         <Button
-          title="Editar perfil y habilidades"
+          title={t('profileSettingsBtn')}
           variant="secondary"
-          icon="create-outline"
+          icon="settings-outline"
           fullWidth
-          onPress={() => router.push('/edit-profile')}
+          onPress={() => router.push('/settings')}
         />
       </Card>
 
       {/* Skills offered & wanted */}
       <Card style={{ gap: spacing.md }}>
         <View style={{ gap: spacing.sm }}>
-          <Badge label="PUEDO ENSEÑAR" fg={colors.primary} bg={colors.primarySoft} icon="easel-outline" />
+          <Badge label={t('profileCanTeachBadge')} fg={colors.primary} bg={colors.primarySoft} icon="easel-outline" />
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
             {offers.map((s) => (
-              <Chip key={s.skillId} label={skillName(s.skillId)} selected tone={colors.primary} />
+              <Chip key={s.skillId} label={skillName(s.skillId, locale)} selected tone={colors.primary} />
             ))}
           </View>
         </View>
         <View style={{ gap: spacing.sm }}>
-          <Badge label="QUIERO APRENDER" fg={colors.accent} bg={colors.accentSoft} icon="bulb-outline" />
+          <Badge label={t('profileWantLearnBadge')} fg={colors.accent} bg={colors.accentSoft} icon="bulb-outline" />
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
             {wants.map((s) => (
-              <Chip key={s.skillId} label={skillName(s.skillId)} selected tone={colors.accent} />
+              <Chip key={s.skillId} label={skillName(s.skillId, locale)} selected tone={colors.accent} />
             ))}
           </View>
         </View>
         <Text variant="caption" color={colors.textMuted}>
-          Disponibilidad habitual: {p.availabilitySummary}
+          {t('profileAvailabilityLabel', { summary: p.availabilitySummary })}
         </Text>
       </Card>
 
       {/* Published activities */}
       <View style={{ gap: spacing.md }}>
         <SectionHeader
-          title="Actividades que ofrezco"
-          subtitle="Configurá si aceptás créditos, dinero o pago mixto en cada una"
+          title={t('profileMyActivitiesTitle')}
+          subtitle={t('profileMyActivitiesSubtitle')}
           action={
             <Button
-              title="Gestionar"
+              title={t('profileManageBtn')}
               variant="secondary"
-              icon="settings-outline"
+              icon="create-outline"
               onPress={() => router.push('/my-activities')}
             />
           }
@@ -153,91 +173,43 @@ export default function ProfileScreen() {
 
       {/* Reviews */}
       <View style={{ gap: spacing.md }}>
-        <SectionHeader
-          title="Reseñas verificadas"
-          subtitle="Solo quienes completaron una sesión verificada pueden dejar reseña"
-        />
+        <SectionHeader title={t('profileReviewsTitle')} subtitle={t('profileReviewsSubtitle')} />
         {(reviews.data ?? []).map((r) => {
           const author = profileMap.get(r.authorId);
           return (
-            <Card key={r.id} style={{ gap: spacing.sm }}>
+            <Card key={r.id} variant="flat" style={{ gap: spacing.sm }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text variant="bodyStrong">{author?.displayName ?? 'Miembro'}</Text>
+                <Text variant="bodyStrong">{author?.displayName ?? t('commonMember')}</Text>
                 <Stars value={r.rating} />
               </View>
               <Text color={colors.text}>{r.comment}</Text>
               <Text variant="caption" color={colors.textMuted}>
-                {formatShortDate(r.createdAt)}
+                {formatShortDate(r.createdAt, locale)}
               </Text>
             </Card>
           );
         })}
       </View>
 
-      {/* Onboarding, Trust & Diagnostics shortcuts */}
-      <Card style={{ backgroundColor: colors.surfaceAlt, gap: spacing.sm }}>
-        <Text variant="bodyStrong">Comunidad, Moderación y Diagnóstico</Text>
+      {/* Community & Moderation shortcuts */}
+      <Card variant="tinted" style={{ gap: spacing.sm }}>
+        <Text variant="bodyStrong">{t('profileCommunityShortcutsTitle')}</Text>
         <Text variant="caption" color={colors.textMuted}>
-          Accedé a tus notificaciones, al panel de moderación y resolución de disputas, al flujo de bienvenida (+18)
-          o al diagnóstico técnico de Expo Go y Supabase.
+          {t('profileCommunityShortcutsSubtitle')}
         </Text>
-        <View style={{ gap: spacing.xs, paddingBottom: spacing.xs }}>
-          <Text variant="caption" color={colors.textMuted}>
-            {t('languageLabel')}:
-          </Text>
-          <View style={{ flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap' }}>
-            <Chip
-              label={`🇦🇷 ${t('localeEsAr')}`}
-              selected={locale === 'es-AR'}
-              onPress={() => setLocale('es-AR')}
-            />
-            <Chip
-              label={`🌐 ${t('localeEn')}`}
-              selected={locale === 'en'}
-              onPress={() => setLocale('en')}
-            />
-          </View>
-        </View>
         <Button
-          title="Notificaciones de la comunidad"
+          title={t('profileNotificationsBtn')}
           variant="secondary"
           icon="notifications-outline"
           fullWidth
           onPress={() => router.push('/notifications')}
         />
         <Button
-          title="Panel de Moderación y Disputas"
+          title={t('profileModerationBtn')}
           variant="secondary"
           icon="shield-checkmark-outline"
           fullWidth
           onPress={() => router.push('/admin')}
-        />
-        <Button
-          title="Probar flujo de Onboarding (3 pasos)"
-          variant="secondary"
-          icon="sparkles-outline"
-          fullWidth
-          onPress={() => {
-            resetToNewOnboarding();
-            router.push('/(onboarding)/eligibility');
-          }}
-        />
-        <Button
-          title="Abrir diagnóstico técnico"
-          variant="secondary"
-          icon="pulse-outline"
-          fullWidth
-          onPress={() => router.push('/dev')}
-        />
-        <Button
-          title="Volver a pantalla de bienvenida"
-          variant="ghost"
-          icon="log-out-outline"
-          fullWidth
-          onPress={() => {
-            signOut();
-            router.replace('/welcome');
-          }}
         />
       </Card>
     </Screen>

@@ -3,7 +3,7 @@ import { Pressable, View } from 'react-native';
 
 import { ActivityCard } from '../../components/activity';
 import { SessionCard } from '../../components/session';
-import { CATEGORIES, getNeighborhood, skillName } from '../../domain/catalog';
+import { CATEGORIES, getCategoryColor, getCategoryName, getNeighborhood, skillName } from '../../domain/catalog';
 import { formatCredits } from '../../lib/format';
 import { useI18n } from '../../lib/i18n';
 import {
@@ -11,18 +11,21 @@ import {
   useCurrentUserId,
   useNotifications,
   useProfile,
+  useProfiles,
   useRecommendations,
   useSessions,
   useWallet,
 } from '../../services/queries';
 import { DemoBanner, ErrorState, LoadingState, Screen, SectionHeader } from '../../ui/layout';
 import { Avatar, Badge, Button, Card, IconCircle, Ionicons, Text, type IconName } from '../../ui/primitives';
-import { colors, radius, spacing } from '../../ui/theme';
+import { FadeInView, radius, spacing, useTheme } from '../../ui/theme';
 
 export default function HomeScreen() {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
+  const { colors, resolvedScheme } = useTheme();
   const { data: userId } = useCurrentUserId();
   const me = useProfile(userId);
+  const allProfiles = useProfiles();
   const wallet = useWallet(userId);
   const recs = useRecommendations(userId);
   const sessions = useSessions(userId);
@@ -32,7 +35,7 @@ export default function HomeScreen() {
   if (me.isLoading || recs.isLoading) {
     return (
       <Screen>
-        <LoadingState label="Cargando tu comunidad…" />
+        <LoadingState label={t('homeLoading')} />
       </Screen>
     );
   }
@@ -46,13 +49,21 @@ export default function HomeScreen() {
   }
 
   const profile = me.data;
-  const neighborhood = getNeighborhood(profile.neighborhoodId)?.name ?? 'Tu barrio';
+  const neighborhood = getNeighborhood(profile.neighborhoodId)?.name ?? t('homeNeighborhoodFallback');
   const unreadNotifications = (notifications.data ?? []).filter((n) => !n.readAt).length;
   const upcoming = (sessions.data ?? []).filter(
     (s) => s.state === 'confirmed' || s.state === 'requested' || s.state === 'in_progress',
   );
   const nextSession = upcoming[0];
   const nextActivity = nextSession ? (allActivities.data ?? []).find((a) => a.id === nextSession.activityId) : undefined;
+  const nextCounterpartId = nextSession
+    ? nextSession.instructorId === profile.id
+      ? nextSession.learnerId
+      : nextSession.instructorId
+    : undefined;
+  const nextCounterpart = nextCounterpartId
+    ? (allProfiles.data ?? []).find((p) => p.id === nextCounterpartId)
+    : undefined;
 
   const reciprocalMatches = (recs.data ?? []).filter((r) => r.reasons.includes('reciprocal'));
   const otherRecs = (recs.data ?? []).filter((r) => !r.reasons.includes('reciprocal')).slice(0, 4);
@@ -71,7 +82,7 @@ export default function HomeScreen() {
       <DemoBanner />
 
       {/* Header */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm }}>
+      <FadeInView style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm }}>
         <View style={{ flex: 1, gap: 2 }}>
           <Text variant="caption" color={colors.textMuted}>
             {t('communityPrefix')} · {neighborhood}
@@ -82,7 +93,7 @@ export default function HomeScreen() {
         </View>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Ver tus créditos disponibles"
+          accessibilityLabel={t('homeCreditsA11y')}
           onPress={() => router.push('/(tabs)/wallet')}
           style={{
             flexDirection: 'row',
@@ -96,12 +107,12 @@ export default function HomeScreen() {
         >
           <Ionicons name="time-outline" size={16} color={colors.credit} />
           <Text variant="bodyStrong" color={colors.credit}>
-            {formatCredits(wallet.data?.available ?? 0)}
+            {formatCredits(wallet.data?.available ?? 0, locale)}
           </Text>
         </Pressable>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Ver notificaciones de la comunidad"
+          accessibilityLabel={t('homeNotificationsA11y')}
           onPress={() => router.push('/notifications')}
           style={{
             position: 'relative',
@@ -128,33 +139,40 @@ export default function HomeScreen() {
                 paddingHorizontal: 4,
               }}
             >
-              <Text variant="caption" color="#FFFFFF" style={{ fontSize: 10, fontWeight: '700' }}>
+              <Text variant="caption" color={colors.textInverse} style={{ fontSize: 10, fontWeight: '700' }}>
                 {unreadNotifications}
               </Text>
             </View>
           ) : null}
         </Pressable>
         <Pressable accessibilityRole="button" onPress={() => router.push('/(tabs)/profile')}>
-          <Avatar name={profile.displayName} size={42} />
+          <Avatar name={profile.displayName} uri={profile.avatarUrl} size={42} />
         </Pressable>
-      </View>
+      </FadeInView>
 
       {/* Mission card */}
-      <Card style={{ backgroundColor: colors.surfaceAlt, gap: spacing.sm }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
-          <Badge label={t('missionBadge')} fg={colors.primary} bg={colors.primarySoft} icon="heart-outline" />
-        </View>
-        <Text variant="bodyStrong">{t('communityTagline')}</Text>
-        <Text variant="caption" color={colors.textMuted}>
-          {t('communityMission')}
-        </Text>
-      </Card>
+      <FadeInView delay={60}>
+        <Card variant="tinted" style={{ gap: spacing.sm }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+            <Badge label={t('missionBadge')} fg={colors.primary} bg={colors.primarySoft} icon="heart-outline" />
+          </View>
+          <Text variant="bodyStrong">{t('communityTagline')}</Text>
+          <Text variant="caption" color={colors.textMuted}>
+            {t('communityMission')}
+          </Text>
+        </Card>
+      </FadeInView>
 
       {/* Next session */}
       {nextSession ? (
         <View style={{ gap: spacing.sm }}>
           <SectionHeader title={t('nextSessionTitle')} subtitle={t('nextSessionSubtitle')} />
-          <SessionCard session={nextSession} activity={nextActivity} viewerId={profile.id} />
+          <SessionCard
+            session={nextSession}
+            activity={nextActivity}
+            counterpart={nextCounterpart}
+            viewerId={profile.id}
+          />
         </View>
       ) : null}
 
@@ -169,7 +187,10 @@ export default function HomeScreen() {
             reasons={rec.reasons}
             footnote={
               rec.reciprocalSkillId
-                ? `💡 ${rec.instructor.displayName.split(' ')[0]} quiere aprender ${skillName(rec.reciprocalSkillId)} (que vos enseñás)`
+                ? t('reciprocalFootnote', {
+                    name: rec.instructor.displayName.split(' ')[0],
+                    skill: skillName(rec.reciprocalSkillId, locale),
+                  })
                 : undefined
             }
           />
@@ -199,9 +220,9 @@ export default function HomeScreen() {
                 opacity: pressed ? 0.85 : 1,
               })}
             >
-              <IconCircle icon={c.icon as IconName} color={c.color} size={34} />
+              <IconCircle icon={c.icon as IconName} color={getCategoryColor(c, resolvedScheme)} size={34} />
               <Text variant="caption" style={{ flex: 1, fontWeight: '600' }} numberOfLines={2}>
-                {c.name}
+                {getCategoryName(c, locale)}
               </Text>
             </Pressable>
           ))}

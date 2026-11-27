@@ -13,26 +13,37 @@ export type ID = string;
 export type UtcTimestamp = string;
 
 export type CategoryId =
-  | 'music_arts'
   | 'languages'
+  | 'music'
   | 'academic'
   | 'tech'
   | 'sports'
-  | 'crafts'
-  | 'personal'
-  | 'community';
+  | 'arts_crafts'
+  | 'practical';
 
 export interface SkillCategory {
   id: CategoryId;
   name: string;
+  nameEn?: string;
   icon: string; // Ionicons glyph name
   color: string;
+  darkColor: string;
 }
 
 export interface Skill {
   id: ID;
   categoryId: CategoryId;
   name: string;
+  nameEn?: string;
+  description?: string;
+  isCustom?: boolean;
+  createdBy?: ID;
+}
+
+export interface CustomSkillInput {
+  name: string;
+  categoryId: CategoryId;
+  description?: string;
 }
 
 export type SkillLevel = 'beginner' | 'intermediate' | 'advanced' | 'expert';
@@ -46,6 +57,19 @@ export interface UserSkill {
 export interface Neighborhood {
   id: ID;
   name: string;
+  isActive: boolean;
+}
+
+export interface NeighborhoodAccessInput {
+  neighborhoodId: ID;
+  accessCode: string;
+}
+
+export interface ProfilePhotoAssetInput {
+  uri: string;
+  mimeType?: string | null;
+  fileSize?: number | null;
+  fileName?: string | null;
 }
 
 export type ProfileStatus = 'pending_eligibility' | 'active' | 'restricted' | 'suspended';
@@ -63,11 +87,13 @@ export interface Profile {
   displayName: string;
   avatarUrl?: string;
   neighborhoodId: ID;
+  neighborhoodVerifiedAt?: UtcTimestamp | null;
   bio: string;
   memberSince: UtcTimestamp;
   skills: UserSkill[];
   availabilitySummary: string;
   availabilityWindows?: AvailabilityWindow[];
+  availabilityNote?: string;
   ratingAvg: number | null;
   ratingCount: number;
   completedSessions: number;
@@ -87,6 +113,8 @@ export interface EligibilitySubmission {
 export interface ProfileUpdateInput {
   displayName: string;
   neighborhoodId: ID;
+  neighborhoodVerifiedAt?: UtcTimestamp | null;
+  avatarUrl?: string | null;
   bio: string;
   availabilitySummary: string;
   skills: UserSkill[];
@@ -95,23 +123,6 @@ export interface ProfileUpdateInput {
 export interface AvailabilityUpdateInput {
   windows: AvailabilityWindow[];
   customNote?: string;
-}
-
-export type PaymentMode = 'credits' | 'money' | 'mixed';
-
-/**
- * How an instructor wants to be paid for one activity.
- * Invariants (enforced by a DB CHECK constraint):
- *  - credits → creditAmount > 0, moneyAmountCents undefined
- *  - money   → moneyAmountCents > 0, creditAmount undefined
- *  - mixed   → both > 0
- * There is deliberately NO global credit↔money exchange rate.
- */
-export interface PaymentArrangement {
-  mode: PaymentMode;
-  creditAmount?: number;
-  moneyAmountCents?: number;
-  currency: 'ARS';
 }
 
 export type ActivityFormat = 'in_person' | 'online' | 'either';
@@ -128,7 +139,8 @@ export interface Activity {
   meetingArea: string;
   requirements: string;
   availabilitySummary: string;
-  payment: PaymentArrangement;
+  /** Integer time-credits per session (1h teaching = 1 credit, non-cashable, >= 1). */
+  creditAmount: number;
   status: 'draft' | 'published' | 'paused' | 'archived';
 }
 
@@ -142,7 +154,7 @@ export interface ActivityUpsertInput {
   meetingArea: string;
   requirements: string;
   availabilitySummary: string;
-  payment: PaymentArrangement;
+  creditAmount: number;
   status: 'published' | 'paused';
 }
 
@@ -170,8 +182,8 @@ export interface Session {
   startsAt: UtcTimestamp;
   endsAt: UtcTimestamp;
   state: SessionState;
-  /** Price snapshot copied at booking time; later edits to the activity don't change it. */
-  price: PaymentArrangement;
+  /** Integer credit snapshot copied at booking time; later edits to the activity don't change it. */
+  creditAmount: number;
   learnerNote?: string;
   cancellationReason?: string;
   cancellationTiming?: CancellationTiming;
@@ -230,44 +242,6 @@ export interface SessionCancelInput {
 export interface SubmitCancellationObjectionInput {
   sessionId: ID;
   reason: string;
-}
-
-export type MonetaryPaymentMethod = 'cash_or_transfer' | 'mercadopago';
-
-export type MonetaryPaymentStatus =
-  | 'pending'
-  | 'reported_by_payer'
-  | 'confirmed_by_payee'
-  | 'disputed'
-  | 'refunded';
-
-/**
- * Separate accounting record for the ARS portion of 'money' or 'mixed' sessions.
- * Strictly separated from CreditLedgerEntry so credits and ARS never mix in one ledger.
- */
-export interface MonetaryPayment {
-  id: ID;
-  sessionId: ID;
-  activityTitle: string;
-  payerId: ID;
-  payeeId: ID;
-  amountCents: number;
-  currency: 'ARS';
-  method: MonetaryPaymentMethod;
-  status: MonetaryPaymentStatus;
-  externalRef?: string;
-  createdAt: UtcTimestamp;
-  updatedAt: UtcTimestamp;
-}
-
-export interface ReportMonetaryPaymentInput {
-  sessionId: ID;
-  method: MonetaryPaymentMethod;
-  externalRef?: string;
-}
-
-export interface ConfirmMonetaryPaymentInput {
-  sessionId: ID;
 }
 
 export interface SafetyReportInput {
@@ -357,7 +331,7 @@ export interface AppNotification {
   createdAt: UtcTimestamp;
 }
 
-export type DisputeStatus = 'open' | 'resolved_refund' | 'resolved_release' | 'resolved_split';
+export type DisputeStatus = 'open' | 'resolved_refund' | 'resolved_release';
 
 export interface DisputeRecord {
   id: ID;
@@ -377,7 +351,7 @@ export interface DisputeRecord {
 
 export interface ResolveDisputeInput {
   disputeId: ID;
-  resolution: 'resolved_refund' | 'resolved_release' | 'resolved_split';
+  resolution: 'resolved_refund' | 'resolved_release';
   resolutionNote: string;
 }
 
@@ -409,7 +383,6 @@ export interface ActivityRecommendation {
 export interface ActivityFilters {
   query?: string;
   categoryId?: CategoryId;
-  paymentMode?: PaymentMode;
   neighborhoodId?: ID;
   format?: ActivityFormat;
   onlyReciprocal?: boolean;

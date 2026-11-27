@@ -10,13 +10,43 @@ import type {
   AppNotification,
   CreditLedgerEntry,
   DisputeRecord,
-  MonetaryPayment,
   Profile,
   Review,
   SafetyReportRecord,
   Session,
   SessionVerificationToken,
+  Skill,
 } from '../domain/types';
+
+export interface NeighborhoodAccessRecord {
+  neighborhoodId: string;
+  isActive: boolean;
+  salt: string;
+  codeHash: string | null;
+}
+
+export const NEIGHBORHOOD_ACCESS_RECORDS: NeighborhoodAccessRecord[] = [
+  {
+    neighborhoodId: 'n-santo-tomas',
+    isActive: true,
+    salt: 'cse-nb-n-santo-tomas-v1',
+    codeHash: '5bc348b4cf70c95d77f7f890961bc0656146c8dadc3ae315c085d542f4e57ac6',
+  },
+  {
+    neighborhoodId: 'n-pilar',
+    isActive: false,
+    salt: 'cse-nb-n-pilar-v1',
+    codeHash: null,
+  },
+  {
+    neighborhoodId: 'n-derqui',
+    isActive: false,
+    salt: 'cse-nb-n-derqui-v1',
+    codeHash: null,
+  },
+];
+
+export const customSkills: Skill[] = [];
 
 export const CURRENT_USER_ID = 'u-me';
 
@@ -36,6 +66,7 @@ export const profiles: Profile[] = [
     id: 'u-me',
     displayName: 'Sofía Romero',
     neighborhoodId: 'n-santo-tomas',
+    neighborhoodVerifiedAt: at(-120, 12),
     bio: 'Profe de piano hace 8 años. Me encanta enseñar a quienes nunca tocaron un instrumento. Quiero animarme al karate y aprender a programar.',
     memberSince: at(-120, 12),
     skills: [
@@ -55,6 +86,7 @@ export const profiles: Profile[] = [
     id: 'u-martin',
     displayName: 'Martín Quiroga',
     neighborhoodId: 'n-santo-tomas',
+    neighborhoodVerifiedAt: at(-200, 12),
     bio: 'Cinturón negro 2º dan. Doy clases en el club del barrio. Siempre quise aprender piano.',
     memberSince: at(-200, 12),
     skills: [
@@ -109,6 +141,7 @@ export const profiles: Profile[] = [
     id: 'u-camila',
     displayName: 'Camila Sosa',
     neighborhoodId: 'n-santo-tomas',
+    neighborhoodVerifiedAt: at(-150, 12),
     bio: 'Desarrolladora. Creo que programar es para todos. Busco una actividad tranquila: piano o yoga.',
     memberSince: at(-150, 12),
     skills: [
@@ -161,6 +194,7 @@ export const profiles: Profile[] = [
     id: 'u-valentina',
     displayName: 'Valentina Ruiz',
     neighborhoodId: 'n-santo-tomas',
+    neighborhoodVerifiedAt: at(-80, 12),
     bio: 'Instructora de yoga. Clases al aire libre en la plaza cuando el clima acompaña.',
     memberSince: at(-80, 12),
     skills: [
@@ -176,7 +210,7 @@ export const profiles: Profile[] = [
   },
 ];
 
-const base = { currency: 'ARS' as const, status: 'published' as const };
+const base = { status: 'published' as const };
 
 export const activities: Activity[] = [
   {
@@ -192,7 +226,7 @@ export const activities: Activity[] = [
     meetingArea: 'Centro cultural de Santo Tomás',
     requirements: 'Ninguno',
     availabilitySummary: 'Martes y jueves 17–20 h',
-    payment: { mode: 'mixed', creditAmount: 1, moneyAmountCents: 200_000, currency: 'ARS' },
+    creditAmount: 1,
   },
   {
     ...base,
@@ -206,7 +240,7 @@ export const activities: Activity[] = [
     meetingArea: 'Café de la plaza o videollamada',
     requirements: 'Nivel intermedio de inglés',
     availabilitySummary: 'Jueves 18–20 h',
-    payment: { mode: 'credits', creditAmount: 1, currency: 'ARS' },
+    creditAmount: 1,
   },
   {
     ...base,
@@ -220,7 +254,7 @@ export const activities: Activity[] = [
     meetingArea: 'Club social de Santo Tomás',
     requirements: 'Ropa cómoda',
     availabilitySummary: 'Lunes y miércoles 19 h',
-    payment: { mode: 'credits', creditAmount: 1, currency: 'ARS' },
+    creditAmount: 1,
   },
   {
     ...base,
@@ -234,7 +268,7 @@ export const activities: Activity[] = [
     meetingArea: 'Canchita del barrio, Santo Tomás',
     requirements: 'Zapatillas',
     availabilitySummary: 'Sábados 10 h',
-    payment: { mode: 'credits', creditAmount: 1, currency: 'ARS' },
+    creditAmount: 1,
   },
   {
     ...base,
@@ -248,7 +282,7 @@ export const activities: Activity[] = [
     meetingArea: 'Plaza principal de Pilar',
     requirements: 'Celular con cámara',
     availabilitySummary: 'Sábados y domingos',
-    payment: { mode: 'money', moneyAmountCents: 800_000, currency: 'ARS' },
+    creditAmount: 1,
   },
   {
     ...base,
@@ -262,7 +296,7 @@ export const activities: Activity[] = [
     meetingArea: 'Biblioteca de Pilar',
     requirements: 'Ninguno',
     availabilitySummary: 'Domingos 16 h',
-    payment: { mode: 'mixed', creditAmount: 1, moneyAmountCents: 200_000, currency: 'ARS' },
+    creditAmount: 1,
   },
   {
     ...base,
@@ -276,7 +310,7 @@ export const activities: Activity[] = [
     meetingArea: 'Biblioteca de Derqui u online',
     requirements: 'Traer los ejercicios',
     availabilitySummary: 'Lunes a viernes 16–19 h',
-    payment: { mode: 'credits', creditAmount: 1, currency: 'ARS' },
+    creditAmount: 1,
   },
   {
     ...base,
@@ -290,7 +324,7 @@ export const activities: Activity[] = [
     meetingArea: 'Videollamada',
     requirements: 'Conocimientos de matemática de secundaria',
     availabilitySummary: 'Martes y jueves 19 h',
-    payment: { mode: 'mixed', creditAmount: 1, moneyAmountCents: 300_000, currency: 'ARS' },
+    creditAmount: 1,
   },
   {
     ...base,
@@ -304,7 +338,7 @@ export const activities: Activity[] = [
     meetingArea: 'Online o espacio coworking Santo Tomás',
     requirements: 'Computadora',
     availabilitySummary: 'Miércoles 20 h',
-    payment: { mode: 'credits', creditAmount: 1.5, currency: 'ARS' },
+    creditAmount: 1,
   },
   {
     ...base,
@@ -318,7 +352,7 @@ export const activities: Activity[] = [
     meetingArea: 'Salón comunitario de Pilar',
     requirements: 'Ninguno',
     availabilitySummary: 'Sábados por la mañana',
-    payment: { mode: 'money', moneyAmountCents: 600_000, currency: 'ARS' },
+    creditAmount: 2,
   },
   {
     ...base,
@@ -332,7 +366,7 @@ export const activities: Activity[] = [
     meetingArea: 'Plaza de Derqui',
     requirements: 'Guitarra propia',
     availabilitySummary: 'Sábados 17 h',
-    payment: { mode: 'credits', creditAmount: 1, currency: 'ARS' },
+    creditAmount: 1,
   },
   {
     ...base,
@@ -346,7 +380,7 @@ export const activities: Activity[] = [
     meetingArea: 'Plaza de Santo Tomás',
     requirements: 'Mat o lona',
     availabilitySummary: 'Sábados y domingos 9 h',
-    payment: { mode: 'credits', creditAmount: 1, currency: 'ARS' },
+    creditAmount: 1,
   },
 ];
 
@@ -366,7 +400,7 @@ function session(
     startsAt,
     endsAt: plusMinutes(startsAt, a.durationMin),
     state,
-    price: { ...a.payment },
+    creditAmount: a.creditAmount,
   };
 }
 
@@ -394,7 +428,7 @@ export const ledger: CreditLedgerEntry[] = [
   {
     id: 'tx-2',
     type: 'hold',
-    amount: -1.5,
+    amount: -1,
     sessionId: 'ses-python',
     idempotencyKey: 'hold:ses-python',
     memo: 'Python desde cero con Camila',
@@ -460,39 +494,15 @@ export const ledger: CreditLedgerEntry[] = [
     createdAt: at(-1, 16),
     status: 'pending',
   },
-];
-
-/**
- * Separate accounting records for the ARS component of 'money' and 'mixed' sessions.
- * Never combined with CreditLedgerEntry.
- */
-export const monetaryPayments: MonetaryPayment[] = [
   {
-    id: 'mp-piano-camila',
-    sessionId: 'ses-piano-camila',
-    activityTitle: 'Piano para principiantes',
-    payerId: 'u-camila',
-    payeeId: 'u-me',
-    amountCents: 200_000,
-    currency: 'ARS',
-    method: 'mercadopago',
-    status: 'reported_by_payer',
-    externalRef: 'Alias: sofia.piano.mp · Comprobante #4821',
-    createdAt: at(-1, 16),
-    updatedAt: at(-1, 17, 20),
-  },
-  {
-    id: 'mp-photo-me',
+    id: 'tx-8',
+    type: 'hold',
+    amount: -1,
     sessionId: 'ses-photo',
-    activityTitle: 'Fotografía con el celular',
-    payerId: 'u-me',
-    payeeId: 'u-lucia',
-    amountCents: 800_000,
-    currency: 'ARS',
-    method: 'cash_or_transfer',
-    status: 'pending',
+    idempotencyKey: 'hold:ses-photo',
+    memo: 'Fotografía con el celular: retenido hasta confirmar y completar la sesión',
     createdAt: at(-1, 11),
-    updatedAt: at(-1, 11),
+    status: 'pending',
   },
 ];
 
@@ -552,10 +562,10 @@ export const notifications: AppNotification[] = [
     id: 'notif-2',
     userId: 'u-me',
     type: 'session_confirmed',
-    title: 'Pago mixto informado por Camila',
-    body: 'Camila Sosa informó el envío del tramo en ARS ($ 2.000) para «Piano para principiantes».',
-    sessionId: 'ses-piano-camila',
-    actorId: 'u-camila',
+    title: 'Sesión confirmada con Martín',
+    body: 'Martín Quiroga confirmó tu sesión de «Karate para principiantes» (1 crédito en custodia).',
+    sessionId: 'ses-karate',
+    actorId: 'u-martin',
     createdAt: at(-1, 17, 25),
   },
   {

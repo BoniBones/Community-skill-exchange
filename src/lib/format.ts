@@ -1,49 +1,26 @@
-import type { PaymentArrangement } from '../domain/types';
+import { getActiveLocale, type SupportedLocale } from './i18n';
 
-/** Formats a credit amount, e.g. 1 → "1 crédito", 1.5 → "1,5 créditos". */
-export function formatCredits(amount: number): string {
-  const abs = Math.abs(amount);
-  const n = Number.isInteger(abs) ? String(abs) : abs.toFixed(2).replace(/0+$/, '').replace('.', ',');
-  const sign = amount < 0 ? '−' : '';
-  return `${sign}${n} ${abs === 1 ? 'crédito' : 'créditos'}`;
-}
-
-/**
- * Formats ARS cents as "$ 8.000" (es-AR grouping). Implemented manually instead of
- * Intl.NumberFormat so output is identical on every Hermes/ICU build.
- */
-export function formatARS(cents: number): string {
-  const pesos = Math.round(cents / 100);
-  const grouped = Math.abs(pesos)
-    .toString()
-    .replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-  return `${pesos < 0 ? '−' : ''}$ ${grouped}`;
-}
-
-export const formatMoneyCents = formatARS;
-
-/** Human summary of a payment arrangement, e.g. "1 crédito + $ 2.000". */
-export function formatPayment(p: PaymentArrangement): string {
-  switch (p.mode) {
-    case 'credits':
-      return formatCredits(p.creditAmount ?? 0);
-    case 'money':
-      return formatARS(p.moneyAmountCents ?? 0);
-    case 'mixed':
-      return `${formatCredits(p.creditAmount ?? 0)} + ${formatARS(p.moneyAmountCents ?? 0)}`;
+/** Formats an integer credit amount, e.g. 1 → "1 crédito" / "1 credit", 2 → "2 créditos" / "2 credits". */
+export function formatCredits(amount: number, locale: SupportedLocale = getActiveLocale()): string {
+  if (!Number.isFinite(amount)) {
+    return locale === 'en' ? '0 credits' : '0 créditos';
   }
+  const whole = Math.round(amount);
+  const abs = Math.abs(whole);
+  const sign = whole < 0 ? '−' : '';
+  if (locale === 'en') {
+    return `${sign}${abs} ${abs === 1 ? 'credit' : 'credits'}`;
+  }
+  return `${sign}${abs} ${abs === 1 ? 'crédito' : 'créditos'}`;
 }
 
-export const paymentModeLabel: Record<PaymentArrangement['mode'], string> = {
-  credits: 'Solo créditos',
-  money: 'Solo dinero',
-  mixed: 'Mixto',
-};
-
-export function formatDuration(min: number): string {
+export function formatDuration(min: number, locale: SupportedLocale = getActiveLocale()): string {
   if (min < 60) return `${min} min`;
   const h = Math.floor(min / 60);
   const m = min % 60;
+  if (locale === 'en') {
+    return m === 0 ? `${h} hr` : `${h} hr ${m} min`;
+  }
   return m === 0 ? `${h} h` : `${h} h ${m} min`;
 }
 

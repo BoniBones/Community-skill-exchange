@@ -3,31 +3,38 @@ import { useState } from 'react';
 import { TextInput, View } from 'react-native';
 
 import { PaymentPill } from '../components/activity';
+import { SkillCatalogPicker } from '../components/SkillCatalogPicker';
 import { SKILLS } from '../domain/catalog';
-import type { Activity, ActivityFormat, ID, PaymentMode } from '../domain/types';
-import { useActivity, useCurrentUserId, useUpsertActivity } from '../services/queries';
+import type { Activity, ActivityFormat, ID } from '../domain/types';
+import { formatCredits, formatDuration } from '../lib/format';
+import { useI18n } from '../lib/i18n';
+import {
+  useActivity,
+  useCreateCustomSkill,
+  useCurrentUserId,
+  useSkills,
+  useUpsertActivity,
+} from '../services/queries';
 import { DemoBanner, LoadingState, Screen, SectionHeader } from '../ui/layout';
 import { Badge, Button, Card, Chip, Text } from '../ui/primitives';
-import { colors, radius, spacing } from '../ui/theme';
+import { radius, spacing, useTheme } from '../ui/theme';
 
 const durations = [45, 60, 90, 120];
-const creditPresets = [0.5, 1, 1.5, 2];
-const formatOptions: { id: ActivityFormat; label: string }[] = [
-  { id: 'in_person', label: 'Presencial' },
-  { id: 'online', label: 'Online' },
-  { id: 'either', label: 'Presencial u online' },
-];
+const creditPresets = [1, 2, 3, 4];
 
 export default function ActivityFormScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const { data: userId } = useCurrentUserId();
   const existing = useActivity(id);
+  const skillsQuery = useSkills();
+  const createCustomSkill = useCreateCustomSkill(userId);
   const upsert = useUpsertActivity(userId);
+  const { t } = useI18n();
 
   if (id && existing.isLoading) {
     return (
       <Screen edges={['bottom']}>
-        <LoadingState label="Cargando actividad…" />
+        <LoadingState label={t('actFormLoading')} />
       </Screen>
     );
   }
@@ -36,6 +43,9 @@ export default function ActivityFormScreen() {
     <ActivityFormInner
       key={existing.data?.id ?? 'new'}
       initial={existing.data ?? null}
+      catalogSkills={skillsQuery.data ?? SKILLS}
+      onCreateCustomSkill={(input) => createCustomSkill.mutateAsync(input)}
+      isCreatingCustom={createCustomSkill.isPending}
       onSubmit={upsert.mutateAsync}
       isSubmitting={upsert.isPending}
     />
@@ -44,43 +54,45 @@ export default function ActivityFormScreen() {
 
 function ActivityFormInner({
   initial,
+  catalogSkills,
+  onCreateCustomSkill,
+  isCreatingCustom,
   onSubmit,
   isSubmitting,
 }: {
   initial: Activity | null;
+  catalogSkills: typeof SKILLS;
+  onCreateCustomSkill: ReturnType<typeof useCreateCustomSkill>['mutateAsync'];
+  isCreatingCustom: boolean;
   onSubmit: ReturnType<typeof useUpsertActivity>['mutateAsync'];
   isSubmitting: boolean;
 }) {
+  const { colors } = useTheme();
+  const { locale, t } = useI18n();
+
   const [skillId, setSkillId] = useState<ID>(initial?.skillId ?? 's-piano');
   const [title, setTitle] = useState(initial?.title ?? '');
   const [description, setDescription] = useState(initial?.description ?? '');
   const [durationMin, setDurationMin] = useState<number>(initial?.durationMin ?? 60);
   const [format, setFormat] = useState<ActivityFormat>(initial?.format ?? 'in_person');
-  const [meetingArea, setMeetingArea] = useState(initial?.meetingArea ?? 'Centro cultural de Santo Tomás');
-  const [requirements, setRequirements] = useState(initial?.requirements ?? 'Ninguno');
+  const [meetingArea, setMeetingArea] = useState(initial?.meetingArea ?? t('actFormDefaultArea'));
+  const [requirements, setRequirements] = useState(initial?.requirements ?? t('commonNone'));
   const [availabilitySummary, setAvailabilitySummary] = useState(
-    initial?.availabilitySummary ?? 'Martes y jueves 17–20 h',
+    initial?.availabilitySummary ?? t('actFormDefaultAvail'),
   );
   const [status, setStatus] = useState<'published' | 'paused'>(
     initial?.status === 'paused' ? 'paused' : 'published',
   );
 
-  // Payment arrangement state
-  const [mode, setMode] = useState<PaymentMode>(initial?.payment.mode ?? 'credits');
-  const [creditAmount, setCreditAmount] = useState<number>(initial?.payment.creditAmount ?? 1);
-  const [arsInput, setArsInput] = useState<string>(
-    initial?.payment.moneyAmountCents ? String(Math.round(initial.payment.moneyAmountCents / 100)) : '2000',
-  );
+  // Integer time-credit state (1h = 1 credit, non-cashable)
+  const [creditAmount, setCreditAmount] = useState<number>(Math.max(1, Math.round(initial?.creditAmount ?? 1)));
   const [error, setError] = useState<string | null>(null);
 
-  const moneyCents = Math.max(0, Math.round(Number(arsInput.replace(/\D/g, '') || '0') * 100));
-
-  const previewPayment = {
-    mode,
-    creditAmount: mode !== 'money' ? creditAmount : undefined,
-    moneyAmountCents: mode !== 'credits' ? moneyCents : undefined,
-    currency: 'ARS' as const,
-  };
+  const formatOptions: { id: ActivityFormat; label: string }[] = [
+    { id: 'in_person', label: t('exploreInPerson') },
+    { id: 'online', label: t('exploreOnline') },
+    { id: 'either', label: t('exploreEither') },
+  ];
 
   const handleSave = async () => {
     setError(null);
@@ -95,13 +107,24 @@ function ActivityFormInner({
         meetingArea,
         requirements,
         availabilitySummary,
-        payment: previewPayment,
+        creditAmount,
         status,
       });
       router.replace({ pathname: '/activity/[id]', params: { id: activity.id } });
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'No pudimos guardar la actividad.');
+      setError(e instanceof Error ? e.message : t('actFormSaveErr'));
     }
+  };
+
+  const inputStyle = {
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    minHeight: 46,
+    fontSize: 15,
+    color: colors.text,
   };
 
   return (
@@ -110,192 +133,135 @@ function ActivityFormInner({
 
       <View style={{ gap: 4 }}>
         <Badge
-          label={initial ? 'EDITAR ACTIVIDAD' : 'NUEVA ACTIVIDAD COMUNITARIA'}
+          label={initial ? t('actFormEditBadge') : t('actFormNewBadge')}
           fg={colors.primary}
           bg={colors.primarySoft}
           icon="easel-outline"
         />
-        <Text variant="title">{initial ? 'Editar actividad y modalidad' : 'Publicar una actividad'}</Text>
+        <Text variant="title">{initial ? t('actFormEditTitle') : t('actFormNewTitle')}</Text>
         <Text variant="caption" color={colors.textMuted}>
-          Definí qué enseñás, en qué lugar público o virtual se realiza y cómo querés recibir el intercambio.
+          {t('actFormSubtitle')}
         </Text>
       </View>
 
       {/* Skill & Title */}
       <Card style={{ gap: spacing.md }}>
-        <SectionHeader title="1. Habilidad y descripción" subtitle="Elegí la habilidad del catálogo comunitario" />
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
-          {SKILLS.map((s) => (
-            <Chip
-              key={s.id}
-              label={s.name}
-              selected={skillId === s.id}
-              tone={colors.primary}
-              onPress={() => setSkillId(s.id)}
-            />
-          ))}
-        </View>
+        <SectionHeader title={t('actFormSec1Title')} subtitle={t('actFormSec1Subtitle')} />
+        <SkillCatalogPicker
+          mode="single"
+          skills={catalogSkills}
+          selectedIds={[skillId]}
+          onChange={(next) => {
+            if (next[0]) setSkillId(next[0]);
+          }}
+          tone={colors.primary}
+          allowCustomCreate
+          isCreatingCustom={isCreatingCustom}
+          onCreateCustomSkill={onCreateCustomSkill}
+        />
+        {catalogSkills.find((s) => s.id === skillId)?.description ? (
+          <Text variant="caption" color={colors.textMuted}>
+            {t('actFormSelectedSkillDesc', {
+              desc: catalogSkills.find((s) => s.id === skillId)!.description!,
+            })}
+          </Text>
+        ) : null}
 
         <View style={{ gap: 4 }}>
           <Text variant="label" color={colors.textMuted}>
-            TÍTULO DE LA ACTIVIDAD
+            {t('actFormTitleLabel')}
           </Text>
           <TextInput
             value={title}
             onChangeText={setTitle}
-            placeholder="Ej: Guitarra criolla desde cero / Conversación en inglés"
+            placeholder={t('actFormTitlePlaceholder')}
             placeholderTextColor={colors.textMuted}
-            style={{
-              backgroundColor: colors.bg,
-              borderWidth: 1,
-              borderColor: colors.border,
-              borderRadius: radius.md,
-              paddingHorizontal: spacing.md,
-              minHeight: 46,
-              fontSize: 16,
-              color: colors.text,
-            }}
+            style={{ ...inputStyle, fontSize: 16 }}
           />
         </View>
 
         <View style={{ gap: 4 }}>
           <Text variant="label" color={colors.textMuted}>
-            DESCRIPCIÓN
+            {t('actFormDescLabel')}
           </Text>
           <TextInput
             value={description}
             onChangeText={setDescription}
-            placeholder="Contá qué van a practicar en el encuentro y a quién está dirigido…"
+            placeholder={t('actFormDescPlaceholder')}
             placeholderTextColor={colors.textMuted}
             multiline
             numberOfLines={3}
             style={{
-              backgroundColor: colors.bg,
-              borderWidth: 1,
-              borderColor: colors.border,
-              borderRadius: radius.md,
-              paddingHorizontal: spacing.md,
+              ...inputStyle,
               paddingVertical: spacing.sm,
               minHeight: 84,
-              fontSize: 15,
-              color: colors.text,
               textAlignVertical: 'top',
             }}
           />
         </View>
       </Card>
 
-      {/* Flexible Payment Arrangement */}
+      {/* Integer Time-Credit Cost (flattened preview row) */}
       <Card style={{ gap: spacing.md }}>
-        <SectionHeader
-          title="2. Modalidad de intercambio"
-          subtitle="Vos decidís cómo recibir el pago. No existe una conversión fija entre créditos y pesos."
-        />
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
-          <Chip
-            label="A. Solo créditos"
-            icon="time-outline"
-            selected={mode === 'credits'}
-            tone={colors.credit}
-            onPress={() => setMode('credits')}
-          />
-          <Chip
-            label="B. Solo dinero (ARS)"
-            icon="cash-outline"
-            selected={mode === 'money'}
-            tone={colors.money}
-            onPress={() => setMode('money')}
-          />
-          <Chip
-            label="C. Pago mixto"
-            icon="options-outline"
-            selected={mode === 'mixed'}
-            tone={colors.primary}
-            onPress={() => setMode('mixed')}
-          />
+        <SectionHeader title={t('actFormSec2Title')} subtitle={t('actFormSec2Subtitle')} />
+
+        <View style={{ gap: spacing.xs }}>
+          <Text variant="label" color={colors.textMuted}>
+            {t('actFormCreditsLabel')}
+          </Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
+            {creditPresets.map((c) => (
+              <Chip
+                key={c}
+                label={formatCredits(c, locale)}
+                selected={creditAmount === c}
+                tone={colors.credit}
+                onPress={() => setCreditAmount(c)}
+              />
+            ))}
+          </View>
         </View>
-
-        {mode !== 'money' ? (
-          <View style={{ gap: spacing.xs }}>
-            <Text variant="label" color={colors.textMuted}>
-              CANTIDAD DE CRÉDITOS COMUNITARIOS (ESTÁNDAR: 1 H = 1 CRÉDITO)
-            </Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
-              {creditPresets.map((c) => (
-                <Chip
-                  key={c}
-                  label={`${String(c).replace('.', ',')} ${c === 1 ? 'crédito' : 'créditos'}`}
-                  selected={creditAmount === c}
-                  tone={colors.credit}
-                  onPress={() => setCreditAmount(c)}
-                />
-              ))}
-            </View>
-          </View>
-        ) : null}
-
-        {mode !== 'credits' ? (
-          <View style={{ gap: 4 }}>
-            <Text variant="label" color={colors.textMuted}>
-              MONTO EN PESOS ARGENTINOS (ARS)
-            </Text>
-            <TextInput
-              value={arsInput}
-              onChangeText={(t) => setArsInput(t.replace(/\D/g, ''))}
-              keyboardType="number-pad"
-              placeholder="Ej: 8000"
-              placeholderTextColor={colors.textMuted}
-              style={{
-                backgroundColor: colors.bg,
-                borderWidth: 1,
-                borderColor: colors.border,
-                borderRadius: radius.md,
-                paddingHorizontal: spacing.md,
-                minHeight: 46,
-                fontSize: 16,
-                fontWeight: '600',
-                color: colors.text,
-              }}
-            />
-          </View>
-        ) : null}
 
         <View
           style={{
-            backgroundColor: colors.surfaceAlt,
-            borderRadius: radius.md,
-            padding: spacing.md,
-            gap: spacing.xs,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            paddingTop: spacing.sm,
+            borderTopWidth: 1,
+            borderTopColor: colors.border,
           }}
         >
           <Text variant="caption" color={colors.textMuted}>
-            Vista previa del acuerdo de pago:
+            {t('actFormCreditsPreview')}
           </Text>
-          <PaymentPill payment={previewPayment} />
+          <PaymentPill creditAmount={creditAmount} />
         </View>
       </Card>
 
       {/* Logistics & Public Meeting Place */}
       <Card style={{ gap: spacing.md }}>
-        <SectionHeader
-          title="3. Duración, formato y punto de encuentro"
-          subtitle="Por seguridad, nunca publiques direcciones particulares"
-        />
+        <SectionHeader title={t('actFormSec3Title')} subtitle={t('actFormSec3Subtitle')} />
 
         <View style={{ gap: spacing.xs }}>
           <Text variant="label" color={colors.textMuted}>
-            DURACIÓN POR SESIÓN
+            {t('actFormDurationLabel')}
           </Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
             {durations.map((d) => (
-              <Chip key={d} label={`${d} min`} selected={durationMin === d} onPress={() => setDurationMin(d)} />
+              <Chip
+                key={d}
+                label={formatDuration(d, locale)}
+                selected={durationMin === d}
+                onPress={() => setDurationMin(d)}
+              />
             ))}
           </View>
         </View>
 
         <View style={{ gap: spacing.xs }}>
           <Text variant="label" color={colors.textMuted}>
-            FORMATO
+            {t('actFormFormatLabel')}
           </Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
             {formatOptions.map((f) => (
@@ -306,83 +272,56 @@ function ActivityFormInner({
 
         <View style={{ gap: 4 }}>
           <Text variant="label" color={colors.textMuted}>
-            PUNTO DE ENCUENTRO PÚBLICO O MODALIDAD
+            {t('actFormMeetingLabel')}
           </Text>
           <TextInput
             value={meetingArea}
             onChangeText={setMeetingArea}
-            placeholder="Ej: Plaza de Santo Tomás / Biblioteca de Pilar / Videollamada"
+            placeholder={t('actFormMeetingPlaceholder')}
             placeholderTextColor={colors.textMuted}
-            style={{
-              backgroundColor: colors.bg,
-              borderWidth: 1,
-              borderColor: colors.border,
-              borderRadius: radius.md,
-              paddingHorizontal: spacing.md,
-              minHeight: 46,
-              fontSize: 15,
-              color: colors.text,
-            }}
+            style={inputStyle}
           />
         </View>
 
         <View style={{ gap: 4 }}>
           <Text variant="label" color={colors.textMuted}>
-            DISPONIBILIDAD PARA ESTA ACTIVIDAD
+            {t('actFormAvailLabel')}
           </Text>
           <TextInput
             value={availabilitySummary}
             onChangeText={setAvailabilitySummary}
-            placeholder="Ej: Martes y jueves 17–20 h"
+            placeholder={t('actFormAvailPlaceholder')}
             placeholderTextColor={colors.textMuted}
-            style={{
-              backgroundColor: colors.bg,
-              borderWidth: 1,
-              borderColor: colors.border,
-              borderRadius: radius.md,
-              paddingHorizontal: spacing.md,
-              minHeight: 46,
-              fontSize: 15,
-              color: colors.text,
-            }}
+            style={inputStyle}
           />
         </View>
 
         <View style={{ gap: 4 }}>
           <Text variant="label" color={colors.textMuted}>
-            REQUISITOS PARA EL APRENDIZ
+            {t('actFormReqLabel')}
           </Text>
           <TextInput
             value={requirements}
             onChangeText={setRequirements}
-            placeholder="Ej: Ninguno / Traer cuaderno / Nivel intermedio"
+            placeholder={t('actFormReqPlaceholder')}
             placeholderTextColor={colors.textMuted}
-            style={{
-              backgroundColor: colors.bg,
-              borderWidth: 1,
-              borderColor: colors.border,
-              borderRadius: radius.md,
-              paddingHorizontal: spacing.md,
-              minHeight: 46,
-              fontSize: 15,
-              color: colors.text,
-            }}
+            style={inputStyle}
           />
         </View>
 
         <View style={{ gap: spacing.xs }}>
           <Text variant="label" color={colors.textMuted}>
-            ESTADO DE LA PUBLICACIÓN
+            {t('actFormStatusLabel')}
           </Text>
           <View style={{ flexDirection: 'row', gap: spacing.sm }}>
             <Chip
-              label="Publicada (visible)"
+              label={t('actFormStatusPublished')}
               icon="eye-outline"
               selected={status === 'published'}
               onPress={() => setStatus('published')}
             />
             <Chip
-              label="Pausada"
+              label={t('actFormStatusPaused')}
               icon="pause-circle-outline"
               selected={status === 'paused'}
               tone={colors.textMuted}
@@ -393,7 +332,7 @@ function ActivityFormInner({
       </Card>
 
       {error ? (
-        <Card style={{ backgroundColor: colors.dangerSoft, borderColor: colors.danger }}>
+        <Card variant="flat" style={{ backgroundColor: colors.dangerSoft, borderColor: colors.danger }}>
           <Text variant="caption" color={colors.danger} style={{ fontWeight: '600' }}>
             {error}
           </Text>
@@ -401,7 +340,7 @@ function ActivityFormInner({
       ) : null}
 
       <Button
-        title={initial ? 'Guardar cambios en la actividad' : 'Publicar actividad en la comunidad'}
+        title={initial ? t('actFormSaveEdit') : t('actFormPublish')}
         icon="checkmark-circle-outline"
         loading={isSubmitting}
         fullWidth
